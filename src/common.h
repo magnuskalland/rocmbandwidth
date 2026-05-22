@@ -43,7 +43,11 @@ enum class CopyAgentPolicy
 {
     HOST,
     SOURCE,
-    DESTINATION
+    DESTINATION,
+    SOURCE_AND_HOST,
+    HOST_AND_DESTINATION,
+    SOURCE_AND_DESTINATION,
+    DESTINATION_AND_SOURCE,
 };
 
 struct config

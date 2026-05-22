@@ -19,14 +19,13 @@ void print_device_info()
     {
         hipDeviceProp_t p;
         HIP_EXIT_ON_FAILURE(hipGetDeviceProperties(&p, i));
-        printf("\t%d: %04x:%02x:%02d.0 %-25s %8ldM (unified addressing: %s)\n",
+        printf("\t%d: %04x:%02x:%02d.0 %-25s %8ldM\n",
                i,
                p.pciDomainID,
                p.pciBusID,
                p.pciDeviceID,
                p.name,
-               p.totalGlobalMem >> 20,
-               p.unifiedAddressing ? "yes" : "no");
+               p.totalGlobalMem >> 20);
     }
     printf("\n");
 }
@@ -128,14 +127,20 @@ auto main(int argc, char** argv) -> int
     print_device_info();
     enable_p2p();
 
-    // bandwidthTestcases += std::make_unique<BandwidthHostToDevice>();
-    // bandwidthTestcases += std::make_unique<BandwidthDeviceToHost>();
+    // bandwidthTestcases += std::make_unique<BandwidthHostToDeviceUnidir>();
+    // bandwidthTestcases += std::make_unique<BandwidthHostToDeviceBidir>();
+    // bandwidthTestcases += std::make_unique<BandwidthDeviceToHostUnidir>();
+    // bandwidthTestcases += std::make_unique<BandwidthDeviceToHostBidir>();
     // bandwidthTestcases += std::make_unique<BandwidthDeviceLocalCopy>();
-    // bandwidthTestcases += std::make_unique<BandwidthDeviceToDeviceWrite>();
-    // bandwidthTestcases += std::make_unique<BandwidthDeviceToDeviceRead>();
-    // bandwidthTestcases += std::make_unique<BandwidthHostToAll>();
-    // bandwidthTestcases += std::make_unique<BandwidthAllToHost>();
-    bandwidthTestcases += std::make_unique<BandwidthDeviceToAllWrite>();
+    // bandwidthTestcases += std::make_unique<BandwidthDeviceToDeviceUnidirWrite>();
+    // bandwidthTestcases += std::make_unique<BandwidthDeviceToDeviceBidirWrite>();
+    // bandwidthTestcases += std::make_unique<BandwidthDeviceToDeviceUnidirRead>();
+    // bandwidthTestcases += std::make_unique<BandwidthDeviceToDeviceBidirRead>();
+    // bandwidthTestcases += std::make_unique<BandwidthHostToAllUnidir>();
+    // bandwidthTestcases += std::make_unique<BandwidthHostToAllBidir>();
+    // bandwidthTestcases += std::make_unique<BandwidthAllToHostUnidir>();
+    // bandwidthTestcases += std::make_unique<BandwidthAllToHostBidir>();
+    // bandwidthTestcases += std::make_unique<BandwidthDeviceToAllWrite>();
     bandwidthTestcases += std::make_unique<BandwidthDeviceToAllRead>();
     // bandwidthTestcases += std::make_unique<BandwidthDeviceRingWrite>();
     // bandwidthTestcases += std::make_unique<BandwidthDeviceRingRead>();

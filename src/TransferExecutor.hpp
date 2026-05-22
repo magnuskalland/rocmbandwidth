@@ -4,6 +4,7 @@
 
 #include "hip/hip_runtime.h"
 #include <boost/assert.hpp>
+#include <vector>
 
 #include "Buffer.hpp"
 #include "common.h"
@@ -27,10 +28,9 @@ public:
                          uint64_t    iterations,
                          hipStream_t stream) -> void = 0;
 
-    virtual auto blockStream(int dev, hipStream_t stream) -> void = 0;
-
     auto getAgent(const Buffer& src, const Buffer& dst, CopyAgentPolicy agent) -> int;
     auto resetStreams() -> void;
+    auto blockStreams(std::vector<hipStream_t> streams) -> void;
     auto unblockStreams() -> void;
     auto resetSourceBuffer(void* buf, uint64_t size) -> void;
     auto resetDestBuffer(void* buf, uint64_t size) -> void;
@@ -52,5 +52,4 @@ public:
     explicit SystemDMAExecutor(uint64_t pattern) : TransferExecutor(pattern) {}
     auto execute(const void* src, void* dst, uint64_t size, uint64_t iterations, hipStream_t stream)
         -> void override;
-    auto blockStream(int dev, hipStream_t stream) -> void override;
 };

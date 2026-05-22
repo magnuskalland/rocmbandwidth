@@ -14,6 +14,10 @@ auto TransferExecutor::getAgent(const Buffer& src, const Buffer& dst, CopyAgentP
 
     if (agent == CopyAgentPolicy::DESTINATION)
     {
+        if (dst.getDevice() == -1)
+        {
+            return src.getDevice();
+        }
         return dst.getDevice();
     }
 
@@ -27,13 +31,23 @@ auto TransferExecutor::getAgent(const Buffer& src, const Buffer& dst, CopyAgentP
 
 auto TransferExecutor::resetStreams() -> void
 {
-    /* Open latch */
+    /* Closed latch */
     *_latch = 0;
+}
+
+auto TransferExecutor::blockStreams(std::vector<hipStream_t> streams) -> void
+{
+    for (auto stream : streams)
+    {
+        int dev;
+        HIP_CHECK(hipStreamGetDevice(stream, &dev));
+        HIP_CHECK(launchSpinKernel(dev, _latch, stream, 1000));
+    }
 }
 
 auto TransferExecutor::unblockStreams() -> void
 {
-    /* Closed latch */
+    /* Open latch */
     *_latch = 1;
 }
 
@@ -102,9 +116,4 @@ auto SystemDMAExecutor::execute(
     {
         HIP_CHECK(hipMemcpyAsync(dst, src, size, hipMemcpyDefault, stream));
     }
-}
-
-auto SystemDMAExecutor::blockStream(int dev, hipStream_t stream) -> void
-{
-    HIP_CHECK(launchSpinKernel(dev, _latch, stream, 10));
 }

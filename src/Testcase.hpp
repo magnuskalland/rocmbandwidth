@@ -38,20 +38,36 @@ private:
 
 /* BandwidthHostToDevice */
 
-class BandwidthHostToDevice : public Testcase
+class BandwidthHostToDeviceUnidir : public Testcase
 {
 public:
-    BandwidthHostToDevice() : Testcase("bw_host_to_device", "") {}
+    BandwidthHostToDeviceUnidir() : Testcase("bw_host_to_device_unidir", "") {}
+    void doExecute(const struct config& conf, CopyAgentPolicy policy) override;
+    void execute(const struct config& cfg) override;
+};
+
+class BandwidthHostToDeviceBidir : public Testcase
+{
+public:
+    BandwidthHostToDeviceBidir() : Testcase("bw_host_to_device_bidir", "") {}
     void doExecute(const struct config& conf, CopyAgentPolicy policy) override;
     void execute(const struct config& cfg) override;
 };
 
 /* BandwidthDeviceToHost */
 
-class BandwidthDeviceToHost : public Testcase
+class BandwidthDeviceToHostUnidir : public Testcase
 {
 public:
-    BandwidthDeviceToHost() : Testcase("bw_device_to_host", "") {}
+    BandwidthDeviceToHostUnidir() : Testcase("bw_device_to_host_unidir", "") {}
+    void doExecute(const struct config& conf, CopyAgentPolicy policy) override;
+    void execute(const struct config& cfg) override;
+};
+
+class BandwidthDeviceToHostBidir : public Testcase
+{
+public:
+    BandwidthDeviceToHostBidir() : Testcase("bw_device_to_host_bidir", "") {}
     void doExecute(const struct config& conf, CopyAgentPolicy policy) override;
     void execute(const struct config& cfg) override;
 };
@@ -68,43 +84,88 @@ public:
 
 /* BandwidthDeviceToDevice */
 
-class BandwidthDeviceToDevice : public Testcase
+class BandwidthDeviceToDeviceUnidir : public Testcase
 {
 public:
-    BandwidthDeviceToDevice(std::string key, std::string desc) : Testcase(key, desc) {}
+    BandwidthDeviceToDeviceUnidir(std::string key, std::string desc) : Testcase(key, desc) {}
     void doExecute(const struct config& conf, CopyAgentPolicy policy) override;
 };
 
-class BandwidthDeviceToDeviceWrite : public BandwidthDeviceToDevice
+class BandwidthDeviceToDeviceUnidirWrite : public BandwidthDeviceToDeviceUnidir
 {
 public:
-    BandwidthDeviceToDeviceWrite() : BandwidthDeviceToDevice("bw_device_to_device_write", "") {}
+    BandwidthDeviceToDeviceUnidirWrite()
+        : BandwidthDeviceToDeviceUnidir("bw_device_to_device_unidir_write", "")
+    {}
     void execute(const struct config& cfg) override;
 };
 
-class BandwidthDeviceToDeviceRead : public BandwidthDeviceToDevice
+class BandwidthDeviceToDeviceUnidirRead : public BandwidthDeviceToDeviceUnidir
 {
 public:
-    BandwidthDeviceToDeviceRead() : BandwidthDeviceToDevice("bw_device_to_device_read", "") {}
+    BandwidthDeviceToDeviceUnidirRead()
+        : BandwidthDeviceToDeviceUnidir("bw_device_to_device_unidir_read", "")
+    {}
+    void execute(const struct config& cfg) override;
+};
+
+class BandwidthDeviceToDeviceBidir : public Testcase
+{
+public:
+    BandwidthDeviceToDeviceBidir(std::string key, std::string desc) : Testcase(key, desc) {}
+    void doExecute(const struct config& conf, CopyAgentPolicy policy) override;
+};
+
+class BandwidthDeviceToDeviceBidirWrite : public BandwidthDeviceToDeviceBidir
+{
+public:
+    BandwidthDeviceToDeviceBidirWrite()
+        : BandwidthDeviceToDeviceBidir("bw_device_to_device_bidir_write", "")
+    {}
+    void execute(const struct config& cfg) override;
+};
+
+class BandwidthDeviceToDeviceBidirRead : public BandwidthDeviceToDeviceBidir
+{
+public:
+    BandwidthDeviceToDeviceBidirRead()
+        : BandwidthDeviceToDeviceBidir("bw_device_to_device_bidir_read", "")
+    {}
     void execute(const struct config& cfg) override;
 };
 
 /* BandwidthHostToAll */
 
-class BandwidthHostToAll : public Testcase
+class BandwidthHostToAllUnidir : public Testcase
 {
 public:
-    BandwidthHostToAll() : Testcase("bw_host_to_all", "") {}
+    BandwidthHostToAllUnidir() : Testcase("bw_host_to_all_unidir", "") {}
+    void doExecute(const struct config& conf, CopyAgentPolicy policy) override;
+    void execute(const struct config& cfg) override;
+};
+
+class BandwidthHostToAllBidir : public Testcase
+{
+public:
+    BandwidthHostToAllBidir() : Testcase("bw_host_to_all_bidir", "") {}
     void doExecute(const struct config& conf, CopyAgentPolicy policy) override;
     void execute(const struct config& cfg) override;
 };
 
 /* BandwidthAllToHost */
 
-class BandwidthAllToHost : public Testcase
+class BandwidthAllToHostUnidir : public Testcase
 {
 public:
-    BandwidthAllToHost() : Testcase("bw_all_to_host", "") {}
+    BandwidthAllToHostUnidir() : Testcase("bw_all_to_host_unidir", "") {}
+    void doExecute(const struct config& conf, CopyAgentPolicy policy) override;
+    void execute(const struct config& cfg) override;
+};
+
+class BandwidthAllToHostBidir : public Testcase
+{
+public:
+    BandwidthAllToHostBidir() : Testcase("bw_all_to_host_bidir", "") {}
     void doExecute(const struct config& conf, CopyAgentPolicy policy) override;
     void execute(const struct config& cfg) override;
 };

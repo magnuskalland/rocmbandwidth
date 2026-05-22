@@ -13,14 +13,15 @@ public:
         : _executor(std::move(executor)), _iterations(iterations)
     {}
 
-    virtual auto sequentialBirectional(const std::vector<const Buffer*>& buffers,
-                                       const std::vector<const Buffer*>& peerBuffers,
-                                       CopyAgentPolicy                   agent) -> double = 0;
-
-    virtual auto concurrentBidirectional(const std::vector<const Buffer*>& buffers,
+    virtual auto sequentialBidirectional(const std::vector<const Buffer*>& buffers,
                                          const std::vector<const Buffer*>& peerBuffers,
-                                         CopyAgentPolicy                   agent,
-                                         std::vector<double>*              bws) -> void = 0;
+                                         CopyAgentPolicy                   agent) -> double = 0;
+
+    virtual auto
+        concurrentBidirectional(const std::vector<std::vector<const Buffer*>>& bufferPairs,
+                                const std::vector<std::vector<const Buffer*>>& peerBufferPairs,
+                                CopyAgentPolicy                                agent,
+                                std::vector<double>*                           bws) -> void = 0;
 
     auto sequentialUnidirectional(const Buffer&   buffer,
                                   const Buffer&   peerBuffer,
@@ -39,9 +40,13 @@ protected:
 
     auto _prepareDestinationBuffers(const std::vector<const Buffer*>& buffers) -> void;
 
-    auto _prepareTransfers(const std::vector<const Buffer*>& buffers,
-                           const std::vector<const Buffer*>& peerBuffers,
-                           CopyAgentPolicy                   policy,
+    auto _createStreamsAndEvents(const std::vector<int>&   agents,
+                                 std::vector<hipStream_t>& streams,
+                                 std::vector<hipEvent_t>&  startEvents,
+                                 std::vector<hipEvent_t>&  endEvents) -> void;
+
+    auto _enqueueTransfers(const std::vector<const Buffer*>& sources,
+                           const std::vector<const Buffer*>& destinations,
                            std::vector<hipStream_t>&         streams,
                            std::vector<hipEvent_t>&          startEvents,
                            std::vector<hipEvent_t>&          endEvents) -> void;
@@ -62,12 +67,12 @@ public:
         : TransferEngine(std::move(executor), iterations)
     {}
 
-    auto sequentialBirectional(const std::vector<const Buffer*>& buffers,
-                               const std::vector<const Buffer*>& peerBuffers,
-                               CopyAgentPolicy                   agent) -> double override;
-
-    auto concurrentBidirectional(const std::vector<const Buffer*>& buffers,
+    auto sequentialBidirectional(const std::vector<const Buffer*>& buffers,
                                  const std::vector<const Buffer*>& peerBuffers,
-                                 CopyAgentPolicy                   agent,
-                                 std::vector<double>*              bws) -> void override;
+                                 CopyAgentPolicy                   agent) -> double override;
+
+    auto concurrentBidirectional(const std::vector<std::vector<const Buffer*>>& buffers,
+                                 const std::vector<std::vector<const Buffer*>>& peerBuffers,
+                                 CopyAgentPolicy                                agent,
+                                 std::vector<double>* bws) -> void override;
 };

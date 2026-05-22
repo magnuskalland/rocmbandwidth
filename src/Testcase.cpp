@@ -6,29 +6,51 @@
 
 /* BandwidthHostToDevice */
 
-void BandwidthHostToDevice::doExecute(const struct config& conf, CopyAgentPolicy policy)
+void BandwidthHostToDeviceUnidir::doExecute(const struct config& conf, CopyAgentPolicy policy)
 {
     auto            executor = std::make_unique<SystemDMAExecutor>(0xDeadBeefCafeBabeULL);
     SystemDMAEngine engine(std::move(executor), conf.iterations);
 
     for (int dev = 0; dev < conf.device_count; dev++)
     {
-        HostBuffer   hostBuffer(dev, conf.bw_bytes);
-        DeviceBuffer deviceBuffer(dev, conf.bw_bytes);
+        HostBuffer   buffer(dev, conf.bw_bytes);
+        DeviceBuffer peerBuffer(dev, conf.bw_bytes);
 
-        double bandwidth = engine.sequentialUnidirectional(hostBuffer, deviceBuffer, policy);
+        double bandwidth = engine.sequentialUnidirectional(buffer, peerBuffer, policy);
         _output << "\tCPU -> GPU " << dev << ": " << bandwidth << " GB/s\n";
     }
 }
 
-void BandwidthHostToDevice::execute(const struct config& conf)
+void BandwidthHostToDeviceUnidir::execute(const struct config& conf)
 {
     doExecute(conf, CopyAgentPolicy::HOST);
 }
 
+void BandwidthHostToDeviceBidir::doExecute(const struct config& conf, CopyAgentPolicy policy)
+{
+    auto            executor = std::make_unique<SystemDMAExecutor>(0xDeadBeefCafeBabeULL);
+    SystemDMAEngine engine(std::move(executor), conf.iterations);
+
+    for (int dev = 0; dev < conf.device_count; dev++)
+    {
+        HostBuffer   hostBuffer1(dev, conf.bw_bytes), hostBuffer2(dev, conf.bw_bytes);
+        DeviceBuffer deviceBuffer1(dev, conf.bw_bytes), deviceBuffer2(dev, conf.bw_bytes);
+
+        double bandwidth = engine.sequentialBidirectional({&hostBuffer1, &hostBuffer2},
+                                                          {&deviceBuffer1, &deviceBuffer2},
+                                                          policy);
+        _output << "\tCPU <-> GPU " << dev << ": " << bandwidth << " GB/s\n";
+    }
+}
+
+void BandwidthHostToDeviceBidir::execute(const struct config& conf)
+{
+    doExecute(conf, CopyAgentPolicy::HOST_AND_DESTINATION);
+}
+
 /* BandwidthDeviceToHost */
 
-void BandwidthDeviceToHost::doExecute(const struct config& conf, CopyAgentPolicy policy)
+void BandwidthDeviceToHostUnidir::doExecute(const struct config& conf, CopyAgentPolicy policy)
 {
     auto            executor = std::make_unique<SystemDMAExecutor>(0xDeadBeefCafeBabeULL);
     SystemDMAEngine engine(std::move(executor), conf.iterations);
@@ -43,9 +65,31 @@ void BandwidthDeviceToHost::doExecute(const struct config& conf, CopyAgentPolicy
     }
 }
 
-void BandwidthDeviceToHost::execute(const struct config& conf)
+void BandwidthDeviceToHostUnidir::execute(const struct config& conf)
 {
     doExecute(conf, CopyAgentPolicy::SOURCE);
+}
+
+void BandwidthDeviceToHostBidir::doExecute(const struct config& conf, CopyAgentPolicy policy)
+{
+    auto            executor = std::make_unique<SystemDMAExecutor>(0xDeadBeefCafeBabeULL);
+    SystemDMAEngine engine(std::move(executor), conf.iterations);
+
+    for (int dev = 0; dev < conf.device_count; dev++)
+    {
+        DeviceBuffer deviceBuffer1(dev, conf.bw_bytes), deviceBuffer2(dev, conf.bw_bytes);
+        HostBuffer   hostBuffer1(dev, conf.bw_bytes), hostBuffer2(dev, conf.bw_bytes);
+
+        double bandwidth = engine.sequentialBidirectional({&deviceBuffer1, &deviceBuffer2},
+                                                          {&hostBuffer1, &hostBuffer2},
+                                                          policy);
+        _output << "\tGPU " << dev << " <-> CPU: " << bandwidth << " GB/s\n";
+    }
+}
+
+void BandwidthDeviceToHostBidir::execute(const struct config& conf)
+{
+    doExecute(conf, CopyAgentPolicy::HOST_AND_DESTINATION);
 }
 
 /* BandwidthDeviceLocalCopy */
@@ -71,7 +115,7 @@ void BandwidthDeviceLocalCopy::execute(const struct config& conf)
 
 /* BandwidthDeviceToDevice */
 
-void BandwidthDeviceToDevice::doExecute(const struct config& conf, CopyAgentPolicy policy)
+void BandwidthDeviceToDeviceUnidir::doExecute(const struct config& conf, CopyAgentPolicy policy)
 {
     auto            executor = std::make_unique<SystemDMAExecutor>(0xDeadBeefCafeBabeULL);
     SystemDMAEngine engine(std::move(executor), conf.iterations);
@@ -94,19 +138,53 @@ void BandwidthDeviceToDevice::doExecute(const struct config& conf, CopyAgentPoli
     }
 }
 
-void BandwidthDeviceToDeviceWrite::execute(const struct config& conf)
+void BandwidthDeviceToDeviceUnidirWrite::execute(const struct config& conf)
 {
     doExecute(conf, CopyAgentPolicy::SOURCE);
 }
 
-void BandwidthDeviceToDeviceRead::execute(const struct config& conf)
+void BandwidthDeviceToDeviceUnidirRead::execute(const struct config& conf)
 {
     doExecute(conf, CopyAgentPolicy::DESTINATION);
 }
 
+void BandwidthDeviceToDeviceBidir::doExecute(const struct config& conf, CopyAgentPolicy policy)
+{
+    auto            executor = std::make_unique<SystemDMAExecutor>(0xDeadBeefCafeBabeULL);
+    SystemDMAEngine engine(std::move(executor), conf.iterations);
+
+    for (int dev = 0; dev < conf.device_count; dev++)
+    {
+        HIP_EXIT_ON_FAILURE(hipSetDevice(dev));
+        DeviceBuffer buffer1(dev, conf.bw_bytes), buffer2(dev, conf.bw_bytes);
+        for (int peer = 0; peer < conf.device_count; peer++)
+        {
+            if (dev == peer)
+            {
+                continue;
+            }
+            DeviceBuffer peerBuffer1(peer, conf.bw_bytes), peerBuffer2(peer, conf.bw_bytes);
+            double       bandwidth = engine.sequentialBidirectional({&buffer1, &buffer2},
+                                                                    {&peerBuffer1, &peerBuffer2},
+                                                              policy);
+            _output << "\tGPU " << dev << " <-> GPU " << peer << ": " << bandwidth << " GB/s\n";
+        }
+    }
+}
+
+void BandwidthDeviceToDeviceBidirWrite::execute(const struct config& conf)
+{
+    doExecute(conf, CopyAgentPolicy::SOURCE_AND_DESTINATION);
+}
+
+void BandwidthDeviceToDeviceBidirRead::execute(const struct config& conf)
+{
+    doExecute(conf, CopyAgentPolicy::SOURCE_AND_DESTINATION);
+}
+
 /* BandwidthHostToAll */
 
-void BandwidthHostToAll::doExecute(const struct config& conf, CopyAgentPolicy policy)
+void BandwidthHostToAllUnidir::doExecute(const struct config& conf, CopyAgentPolicy policy)
 {
     auto            executor = std::make_unique<SystemDMAExecutor>(0xDeadBeefCafeBabeULL);
     SystemDMAEngine engine(std::move(executor), conf.iterations);
@@ -133,14 +211,58 @@ void BandwidthHostToAll::doExecute(const struct config& conf, CopyAgentPolicy po
     _output << "\tSum: " << sum << " GB/s\n";
 }
 
-void BandwidthHostToAll::execute(const struct config& conf)
+void BandwidthHostToAllUnidir::execute(const struct config& conf)
 {
     doExecute(conf, CopyAgentPolicy::HOST);
 }
 
+void BandwidthHostToAllBidir::doExecute(const struct config& conf, CopyAgentPolicy policy)
+{
+    auto            executor = std::make_unique<SystemDMAExecutor>(0xDeadBeefCafeBabeULL);
+    SystemDMAEngine engine(std::move(executor), conf.iterations);
+    int             devcount = conf.device_count;
+    std::vector<std::vector<const Buffer*>> hostBufferPairs(2);
+    std::vector<std::vector<const Buffer*>> deviceBufferPairs(2);
+    std::vector<double>                     bandwidths(devcount);
+    double                                  sum = 0.0;
+
+    for (int i = 0; i < 2; i++)
+    {
+        hostBufferPairs[i].resize(devcount);
+        deviceBufferPairs[i].resize(devcount);
+
+        for (int dev = 0; dev < devcount; dev++)
+        {
+            HIP_EXIT_ON_FAILURE(hipSetDevice(dev));
+            hostBufferPairs[i][dev]   = new HostBuffer(dev, conf.bw_bytes);
+            deviceBufferPairs[i][dev] = new DeviceBuffer(dev, conf.bw_bytes);
+        }
+    }
+
+    engine.concurrentBidirectional(hostBufferPairs, deviceBufferPairs, policy, &bandwidths);
+
+    for (int dev = 0; dev < devcount; dev++)
+    {
+        _output << "\tCPU <-> GPU " << dev << ": " << bandwidths.at(dev) << " GB/s\n";
+        sum += bandwidths.at(dev);
+
+        for (int i = 0; i < 2; i++)
+        {
+            delete hostBufferPairs[i][dev];
+            delete deviceBufferPairs[i][dev];
+        }
+    }
+    _output << "\tSum: " << sum << " GB/s\n";
+}
+
+void BandwidthHostToAllBidir::execute(const struct config& conf)
+{
+    doExecute(conf, CopyAgentPolicy::HOST_AND_DESTINATION);
+}
+
 /* BandwidthAllToHost */
 
-void BandwidthAllToHost::doExecute(const struct config& conf, CopyAgentPolicy policy)
+void BandwidthAllToHostUnidir::doExecute(const struct config& conf, CopyAgentPolicy policy)
 {
     auto            executor = std::make_unique<SystemDMAExecutor>(0xDeadBeefCafeBabeULL);
     SystemDMAEngine engine(std::move(executor), conf.iterations);
@@ -170,9 +292,53 @@ void BandwidthAllToHost::doExecute(const struct config& conf, CopyAgentPolicy po
     _output << "\tSum: " << sum << " GB/s\n";
 }
 
-void BandwidthAllToHost::execute(const struct config& conf)
+void BandwidthAllToHostUnidir::execute(const struct config& conf)
 {
     doExecute(conf, CopyAgentPolicy::SOURCE);
+}
+
+void BandwidthAllToHostBidir::doExecute(const struct config& conf, CopyAgentPolicy policy)
+{
+    auto            executor = std::make_unique<SystemDMAExecutor>(0xDeadBeefCafeBabeULL);
+    SystemDMAEngine engine(std::move(executor), conf.iterations);
+    int             devcount = conf.device_count;
+    std::vector<std::vector<const Buffer*>> deviceBufferPairs(2);
+    std::vector<std::vector<const Buffer*>> hostBufferPairs(2);
+    std::vector<double>                     bandwidths(devcount);
+    double                                  sum = 0.0;
+
+    for (int i = 0; i < 2; i++)
+    {
+        hostBufferPairs[i].resize(devcount);
+        deviceBufferPairs[i].resize(devcount);
+
+        for (int dev = 0; dev < devcount; dev++)
+        {
+            HIP_EXIT_ON_FAILURE(hipSetDevice(dev));
+            deviceBufferPairs[i][dev] = new DeviceBuffer(dev, conf.bw_bytes);
+            hostBufferPairs[i][dev]   = new HostBuffer(dev, conf.bw_bytes);
+        }
+    }
+
+    engine.concurrentBidirectional(deviceBufferPairs, hostBufferPairs, policy, &bandwidths);
+
+    for (int dev = 0; dev < devcount; dev++)
+    {
+        _output << "\tGPU " << dev << " -> CPU" << ": " << bandwidths.at(dev) << " GB/s\n";
+        sum += bandwidths.at(dev);
+
+        for (int i = 0; i < 2; i++)
+        {
+            delete hostBufferPairs[i][dev];
+            delete deviceBufferPairs[i][dev];
+        }
+    }
+    _output << "\tSum: " << sum << " GB/s\n";
+}
+
+void BandwidthAllToHostBidir::execute(const struct config& conf)
+{
+    doExecute(conf, CopyAgentPolicy::SOURCE_AND_HOST);
 }
 
 /* BandwidthDeviceToAll */
