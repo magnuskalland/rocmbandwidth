@@ -2,11 +2,11 @@
 #include "TransferExecutor.hpp"
 #include "common.h"
 #include "kernels.hpp"
+#include <algorithm>
+#include <random>
 
 auto TransferExecutor::getAgent(const Buffer& src, const Buffer& dst, CopyAgentPolicy agent) -> int
 {
-    BOOST_ASSERT(!(src.getDevice() == -1 && dst.getDevice() == -1));
-
     if (agent == CopyAgentPolicy::SOURCE)
     {
         return src.getDevice();
@@ -41,7 +41,7 @@ auto TransferExecutor::blockStreams(std::vector<hipStream_t> streams) -> void
     {
         int dev;
         HIP_CHECK(hipStreamGetDevice(stream, &dev));
-        HIP_CHECK(launchSpinKernel(dev, _latch, stream, 1000));
+        launchSpinKernel(dev, _latch, stream, 1000);
     }
 }
 
@@ -72,7 +72,7 @@ auto TransferExecutor::resetDestBuffer(void* buf, uint64_t size) -> void
     if (attrs.type == hipMemoryTypeHost)
     {
         auto* p = reinterpret_cast<uint64_t*>(buf);
-        return std::all_of(p, p + count, [&](uint64_t v) { return v == _sourcePattern; });
+        return std::all_of(p, p + count, [&](uint64_t v) -> bool { return v == _sourcePattern; });
     }
     else
     {
@@ -82,8 +82,8 @@ auto TransferExecutor::resetDestBuffer(void* buf, uint64_t size) -> void
         HIP_CHECK(hipMalloc(&deviceOk, sizeof(bool)));
         HIP_CHECK(hipMemcpy(deviceOk, &hostOk, sizeof(bool), hipMemcpyHostToDevice));
         launchVerifyKernel(reinterpret_cast<uint64_t*>(buf), _sourcePattern, count, deviceOk);
-        HIP_CHECK(hipGetLastError()); // ← catch launch failures
-        HIP_CHECK(hipDeviceSynchronize()); // ← ensure kernel completes before memcpy back
+        HIP_CHECK(hipGetLastError());
+        HIP_CHECK(hipDeviceSynchronize());
         HIP_CHECK(hipMemcpy(&hostOk, deviceOk, sizeof(bool), hipMemcpyDeviceToHost));
         HIP_CHECK(hipFree(deviceOk));
         return hostOk;
@@ -109,11 +109,47 @@ auto TransferExecutor::_memset(void* buf, uint64_t size, uint64_t pattern) -> vo
     }
 }
 
+auto LatencyExecutor::resetSourceBuffer(void* buf, uint64_t size) -> void
+{
+    const int        stride = 16; /* GPU cache line size in words */
+    const int        nptrs  = size / stride;
+    node*            nodes  = reinterpret_cast<node*>(buf);
+    std::vector<int> perm(nptrs);
+    for (int i = 0; i < nptrs; i++)
+    {
+        perm[i] = i;
+    }
+
+    std::mt19937 rng(12345);
+    std::shuffle(perm.begin(), perm.end(), rng);
+
+    for (int i = 0; i < nptrs; i++)
+    {
+        int next_i          = perm[(i + 1) % nptrs];
+        nodes[perm[i]].next = &nodes[next_i];
+    }
+}
+
+auto LatencyExecutor::execute(
+    const void* src, void* dst, uint64_t size, uint64_t accesses, hipStream_t stream) -> uint64_t
+{
+    (void)dst;
+    uint64_t lat = launchPtrChaseKernel(src, size, accesses, stream);
+    return lat;
+}
+
 auto SystemDMAExecutor::execute(
-    const void* src, void* dst, uint64_t size, uint64_t iterations, hipStream_t stream) -> void
+    const void* src, void* dst, uint64_t size, uint64_t iterations, hipStream_t stream) -> uint64_t
 {
     for (uint64_t i = 0; i < iterations; i++)
     {
         HIP_CHECK(hipMemcpyAsync(dst, src, size, hipMemcpyDefault, stream));
     }
+    return size;
+}
+
+auto ComputeUnitExecutor::execute(
+    const void* src, void* dst, uint64_t size, uint64_t iterations, hipStream_t stream) -> uint64_t
+{
+    return launchCopyKernel(src, dst, size, iterations, stream);
 }

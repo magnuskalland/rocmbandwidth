@@ -1,9 +1,7 @@
 
-#include <algorithm>
 #include <cstdint>
 
 #include "hip/hip_runtime.h"
-#include <boost/assert.hpp>
 #include <vector>
 
 #include "Buffer.hpp"
@@ -26,16 +24,16 @@ public:
                          void*       dst,
                          uint64_t    size,
                          uint64_t    iterations,
-                         hipStream_t stream) -> void = 0;
+                         hipStream_t stream) -> uint64_t = 0;
 
+    virtual auto resetSourceBuffer(void* buf, uint64_t size) -> void;
+
+    auto verify(void* buf, uint64_t size) -> bool;
     auto getAgent(const Buffer& src, const Buffer& dst, CopyAgentPolicy agent) -> int;
     auto resetStreams() -> void;
     auto blockStreams(std::vector<hipStream_t> streams) -> void;
     auto unblockStreams() -> void;
-    auto resetSourceBuffer(void* buf, uint64_t size) -> void;
     auto resetDestBuffer(void* buf, uint64_t size) -> void;
-
-    [[nodiscard]] auto verify(void* buf, uint64_t size) -> bool;
 
 protected:
     uint64_t      _sourcePattern;
@@ -46,10 +44,27 @@ private:
     auto _memset(void* buf, uint64_t size, uint64_t pattern) -> void;
 };
 
+class LatencyExecutor : public TransferExecutor
+{
+public:
+    explicit LatencyExecutor(uint64_t pattern) : TransferExecutor(pattern) {}
+    auto execute(const void* dev, void* data, uint64_t size, uint64_t accesses, hipStream_t stream)
+        -> uint64_t override;
+    auto resetSourceBuffer(void* buf, uint64_t size) -> void override;
+};
+
 class SystemDMAExecutor : public TransferExecutor
 {
 public:
     explicit SystemDMAExecutor(uint64_t pattern) : TransferExecutor(pattern) {}
     auto execute(const void* src, void* dst, uint64_t size, uint64_t iterations, hipStream_t stream)
-        -> void override;
+        -> uint64_t override;
+};
+
+class ComputeUnitExecutor : public TransferExecutor
+{
+public:
+    explicit ComputeUnitExecutor(uint64_t pattern) : TransferExecutor(pattern) {}
+    auto execute(const void* src, void* dst, uint64_t size, uint64_t iterations, hipStream_t stream)
+        -> uint64_t override;
 };

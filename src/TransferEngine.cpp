@@ -5,21 +5,6 @@
 
 #include <cmath>
 
-auto TransferEngine::sequentialUnidirectional(const Buffer&   buffer,
-                                              const Buffer&   peerBuffer,
-                                              CopyAgentPolicy agent) -> double
-{
-    return sequentialBidirectional({&buffer}, {&peerBuffer}, agent);
-}
-
-auto TransferEngine::concurrentUnidirectional(const std::vector<const Buffer*>& buffers,
-                                              const std::vector<const Buffer*>& peerBuffers,
-                                              CopyAgentPolicy                   agent,
-                                              std::vector<double>*              bws) -> void
-{
-    concurrentBidirectional({buffers}, {peerBuffers}, agent, bws);
-}
-
 auto TransferEngine::_prepareSourceBuffers(const std::vector<const Buffer*>& buffers) -> void
 {
     /* Memset a pattern into the source buffers */
@@ -48,9 +33,20 @@ auto TransferEngine::_enqueueTransfers(const std::vector<const Buffer*>& sources
                                        const std::vector<const Buffer*>& destinations,
                                        std::vector<hipStream_t>&         streams,
                                        std::vector<hipEvent_t>&          startEvents,
-                                       std::vector<hipEvent_t>&          endEvents) -> void
+                                       std::vector<hipEvent_t>&          endEvents,
+                                       std::vector<uint64_t>&            bytesCopied) -> void
 {
     auto nBuffers = sources.size();
+
+    /* Warmup */
+    for (size_t i = 0; i < nBuffers; i++)
+    {
+        _executor->execute(sources[i]->getBuffer(),
+                           destinations[i]->getBuffer(),
+                           sources[i]->getSize(),
+                           4,
+                           streams[i]);
+    }
 
     HIP_RETURN_VOID_ON_FAILURE(hipEventRecord(startEvents[0], streams[0]));
     for (size_t i = 1; i < nBuffers; i++)
@@ -61,16 +57,18 @@ auto TransferEngine::_enqueueTransfers(const std::vector<const Buffer*>& sources
 
     for (size_t i = 0; i < nBuffers; i++)
     {
-        _executor->execute(sources[i]->getBuffer(),
-                           destinations[i]->getBuffer(),
-                           sources[i]->getSize(),
-                           _iterations,
-                           streams[i]);
-        HIP_RETURN_VOID_ON_FAILURE(hipEventRecord(endEvents[i], streams[i]));
+        auto src       = sources[i]->getBuffer();
+        auto dst       = destinations[i]->getBuffer();
+        auto size      = sources[i]->getSize();
+        auto stream    = streams[i];
+        bytesCopied[i] = _executor->execute(src, dst, size, _iterations, stream);
+        HIP_RETURN_VOID_ON_FAILURE(hipEventRecord(endEvents[i], stream));
     }
 
     for (size_t i = 0; i < nBuffers; i++)
+    {
         HIP_RETURN_VOID_ON_FAILURE(hipStreamWaitEvent(streams[0], endEvents[i]));
+    }
 }
 
 auto TransferEngine::_prepareDestinationBuffers(const std::vector<const Buffer*>& buffers) -> void
@@ -95,11 +93,15 @@ auto TransferEngine::_cleanupTransfers(std::vector<hipStream_t>& streams,
     }
 }
 
-auto TransferEngine::_verify(const std::vector<const Buffer*>& buffers) -> bool
+auto TransferEngine::_verify(const std::vector<const Buffer*>& buffers,
+                             std::vector<uint64_t>             bytesCopied) -> bool
 {
-    for (auto buf : buffers)
+    for (uint64_t i = 0; i < buffers.size(); i++)
     {
-        bool ok = _executor->verify(buf->getBuffer(), buf->getSize());
+        const Buffer* buf   = buffers.at(i);
+        uint64_t      bytes = bytesCopied.at(i);
+        bool          ok    = _executor->verify(buf->getBuffer(), bytes);
+
         if (!ok)
         {
             fprintf(stderr, "error: destination buffer corrupt\n");
@@ -109,19 +111,51 @@ auto TransferEngine::_verify(const std::vector<const Buffer*>& buffers) -> bool
     return true;
 }
 
-auto SystemDMAEngine::sequentialBidirectional(const std::vector<const Buffer*>& buffers,
-                                              const std::vector<const Buffer*>& peerBuffers,
-                                              CopyAgentPolicy                   policy) -> double
+auto TransferEngine::sequentialUnidirectional(const Buffer&   buffer,
+                                              const Buffer&   peerBuffer,
+                                              CopyAgentPolicy agent) -> double
 {
-    // if ((policy == CopyAgentPolicy::DESTINATION
-    //      && !(supportsUnifiedAddressing(peerBuffers.at(0)->getDevice()))))
-    // {
-    //     return 0.0;
-    // }
+    return sequentialBidirectional({&buffer}, {&peerBuffer}, agent);
+}
 
+auto TransferEngine::concurrentUnidirectional(const std::vector<const Buffer*>& buffers,
+                                              const std::vector<const Buffer*>& peerBuffers,
+                                              CopyAgentPolicy                   agent,
+                                              std::vector<double>*              bws) -> void
+{
+    concurrentBidirectional({buffers}, {peerBuffers}, agent, bws);
+}
+
+auto LatencyTransferEngine::sequentialUnidirectional(const Buffer&   buffer,
+                                                     const Buffer&   peerBuffer,
+                                                     CopyAgentPolicy policy) -> double
+{
+    hipStream_t stream;
+    uint64_t    lat;
+    int         agent = _executor->getAgent(buffer, peerBuffer, policy);
+
+    _prepareSourceBuffers({&buffer});
+
+    HIP_CHECK(hipSetDevice(agent));
+    HIP_CHECK(hipStreamCreate(&stream));
+    lat = _executor->execute(buffer.getBuffer(),
+                             peerBuffer.getBuffer(),
+                             buffer.getSize(),
+                             _iterations,
+                             stream);
+
+    HIP_CHECK(hipStreamDestroy(stream));
+    return lat;
+};
+
+auto TransferEngine::sequentialBidirectional(const std::vector<const Buffer*>& buffers,
+                                             const std::vector<const Buffer*>& peerBuffers,
+                                             CopyAgentPolicy                   policy) -> double
+{
     auto                       nBuffers = static_cast<int>(buffers.size());
     std::vector<const Buffer*> sourceBuffers(buffers.size());
     std::vector<const Buffer*> destinationBuffers(buffers.size());
+    std::vector<uint64_t>      bytesCopied(nBuffers);
     std::vector<hipStream_t>   streams(nBuffers);
     std::vector<hipEvent_t>    startEvents(nBuffers);
     std::vector<hipEvent_t>    endEvents(nBuffers);
@@ -129,10 +163,6 @@ auto SystemDMAEngine::sequentialBidirectional(const std::vector<const Buffer*>& 
     std::vector<int>           agents(nBuffers);
     double                     totalBandwidth = 0.0;
     bool                       ok;
-
-    for (int i = 0; i < nBuffers; i++)
-    {
-    }
 
     for (int i = 0; i < nBuffers; i++)
     {
@@ -156,7 +186,12 @@ auto SystemDMAEngine::sequentialBidirectional(const std::vector<const Buffer*>& 
     _createStreamsAndEvents(agents, streams, startEvents, endEvents);
     _executor->resetStreams();
     _executor->blockStreams(streams);
-    _enqueueTransfers(sourceBuffers, destinationBuffers, streams, startEvents, endEvents);
+    _enqueueTransfers(sourceBuffers,
+                      destinationBuffers,
+                      streams,
+                      startEvents,
+                      endEvents,
+                      bytesCopied);
 
     /* Unblock spin kernels, start measurements */
     _executor->unblockStreams();
@@ -168,7 +203,7 @@ auto SystemDMAEngine::sequentialBidirectional(const std::vector<const Buffer*>& 
     }
 
     /* Verify destination buffers */
-    ok = _verify(destinationBuffers);
+    ok = _verify(destinationBuffers, bytesCopied);
     if (!ok)
     {
         return 0.0;
@@ -177,9 +212,8 @@ auto SystemDMAEngine::sequentialBidirectional(const std::vector<const Buffer*>& 
     for (int i = 0; i < nBuffers; i++)
     {
         HIP_RETURN_DOUBLE_ON_FAILURE(
-            hipEventElapsedTime(&times.at(i), startEvents.at(i), endEvents.at(i)))
-        double bandwidth
-            = calculate_bandwidth(sourceBuffers.at(i)->getSize(), _iterations, times.at(i));
+            hipEventElapsedTime(&times.at(i), startEvents.at(i), endEvents.at(i)));
+        double bandwidth = calculate_bandwidth(bytesCopied[i], _iterations, times.at(i));
         totalBandwidth += bandwidth;
     }
 
@@ -188,25 +222,19 @@ auto SystemDMAEngine::sequentialBidirectional(const std::vector<const Buffer*>& 
     return totalBandwidth;
 }
 
-auto SystemDMAEngine::concurrentBidirectional(
+auto TransferEngine::concurrentBidirectional(
     const std::vector<std::vector<const Buffer*>>& bufferPairs,
     const std::vector<std::vector<const Buffer*>>& peerBufferPairs,
     CopyAgentPolicy                                policy,
     std::vector<double>*                           bandwidths) -> void
 {
-
-    // if ((policy == CopyAgentPolicy::DESTINATION
-    //      && !(supportsUnifiedAddressing(peerBufferPairs.at(0).at(0)->getDevice()))))
-    // {
-    //     return;
-    // }
-
     /* Pair size is 1 if called from concurrentUnidirectional and 2 if called raw */
     int pairSize = static_cast<int>(bufferPairs.size());
     int nBuffers = static_cast<int>(bufferPairs.at(0).size());
 
     std::vector<std::vector<const Buffer*>> sourceBufferPairs(pairSize);
     std::vector<std::vector<const Buffer*>> destinationBufferPairs(pairSize);
+    std::vector<uint64_t>                   bytesCopied(nBuffers);
     std::vector<std::vector<hipStream_t>>   streamPairs(pairSize);
     std::vector<std::vector<hipEvent_t>>    startEventPairs(pairSize);
     std::vector<std::vector<hipEvent_t>>    endEventPairs(pairSize);
@@ -262,7 +290,8 @@ auto SystemDMAEngine::concurrentBidirectional(
                           destinationBufferPairs.at(i),
                           streamPairs.at(i),
                           startEventPairs.at(i),
-                          endEventPairs.at(i));
+                          endEventPairs.at(i),
+                          bytesCopied);
     }
 
     /* Unblock spin kernels, start measurements */
@@ -280,7 +309,7 @@ auto SystemDMAEngine::concurrentBidirectional(
     /* Verify destination buffers */
     for (int i = 0; i < pairSize; i++)
     {
-        ok = _verify(destinationBufferPairs.at(i));
+        ok = _verify(destinationBufferPairs.at(i), bytesCopied);
         if (!ok)
         {
             return;
@@ -296,10 +325,8 @@ auto SystemDMAEngine::concurrentBidirectional(
             double bandwidth;
 
             HIP_RETURN_VOID_ON_FAILURE(
-                hipEventElapsedTime(&time, startEventPairs.at(j).at(i), endEventPairs.at(j).at(i)))
-
-            bandwidth = calculate_bandwidth(bufferPairs.at(j).at(i)->getSize(), _iterations, time);
-
+                hipEventElapsedTime(&time, startEventPairs.at(j).at(i), endEventPairs.at(j).at(i)));
+            bandwidth = calculate_bandwidth(bytesCopied[i], _iterations, time);
             (*bandwidths)[i] += bandwidth;
         }
     }

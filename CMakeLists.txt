@@ -45,6 +45,11 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(CMAKE_CXX_FLAGS     "${CMAKE_CXX_FLAGS}     --save-temps")
+    set(CMAKE_HIP_FLAGS     "${CMAKE_HIP_FLAGS}     --save-temps")
+endif()
+
 # ==============================================================================
 # ROCm / HIP configuration.
 #
@@ -103,19 +108,6 @@ endforeach()
 # ==============================================================================
 find_package(hip REQUIRED CONFIG)
 message(STATUS "Found HIP: ${hip_VERSION}")
-
-# ==============================================================================
-# Find Boost.
-#
-# Creates imported targets Boost::<Component> with include dirs and link
-# libraries already attached. Add or remove COMPONENTS to match your usage.
-# Override the Boost root if needed:
-#   cmake -DBOOST_ROOT=/path/to/boost .
-# ==============================================================================
-find_package(Boost REQUIRED COMPONENTS
-    program_options
-)
-message(STATUS "Found Boost: ${Boost_VERSION}")
 
 # ==============================================================================
 # Enforce out-of-source build.
@@ -178,6 +170,5 @@ message(STATUS "  Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "  C++ std   : ${CMAKE_CXX_STANDARD}")
 message(STATUS "  GPU arches: ${GPU_TARGETS}")
 message(STATUS "  ROCm path : ${ROCM_PATH}")
-message(STATUS "  Boost ver : ${Boost_VERSION}")
 message(STATUS "  Binary dir: ${CMAKE_BINARY_DIR}")
 message(STATUS "--------------------------------------------------------------")

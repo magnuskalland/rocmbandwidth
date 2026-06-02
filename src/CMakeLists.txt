@@ -148,7 +148,7 @@ target_compile_options(${PROJECT_NAME}
 target_link_libraries(${PROJECT_NAME}
     PRIVATE
         hip::host
-        Boost::program_options
+        # Boost::program_options
         # Boost::thread
         # roc::rocblas
 )

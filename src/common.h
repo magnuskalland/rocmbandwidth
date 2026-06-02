@@ -5,36 +5,57 @@
 
 #include "hip/hip_runtime.h"
 
-#define PRINT_ERR()                                                                          \
-    std::cerr << "HIP Error: " << hipGetErrorString(hipGetLastError()) << " in " << __FILE__ \
-              << " at line " << __LINE__ << std::endl;
+#define PRINT_ERR(e)                                                                        \
+    std::cerr << "HIP Error: " << hipGetErrorString(e) << " in " << __FILE__ << " at line " \
+              << __LINE__ << std::endl;
 
 #define HIP_EXIT_ON_FAILURE(command) \
-    if ((command) != hipSuccess)     \
+    do                               \
     {                                \
-        PRINT_ERR()                  \
-        exit(1);                     \
-    }
+        hipError_t _e = (command);   \
+        if (_e != hipSuccess)        \
+        {                            \
+            PRINT_ERR(_e)            \
+            exit(1);                 \
+        }                            \
+    }                                \
+    while (0)
 
 #define HIP_RETURN_DOUBLE_ON_FAILURE(command) \
-    if ((command) != hipSuccess)              \
+    do                                        \
     {                                         \
-        PRINT_ERR()                           \
-        return 0.0;                           \
-    }
+        hipError_t _e = (command);            \
+        if (_e != hipSuccess)                 \
+        {                                     \
+            PRINT_ERR(_e)                     \
+            return 0.0;                       \
+        }                                     \
+    }                                         \
+    while (0)
 
 #define HIP_RETURN_VOID_ON_FAILURE(command) \
-    if ((command) != hipSuccess)            \
+    do                                      \
     {                                       \
-        PRINT_ERR()                         \
-        return;                             \
-    }
+        hipError_t _e = (command);          \
+        if (_e != hipSuccess)               \
+        {                                   \
+            PRINT_ERR(_e)                   \
+            return;                         \
+        }                                   \
+    }                                       \
+    while (0)
 
-#define HIP_CHECK(command)       \
-    if ((command) != hipSuccess) \
-    {                            \
-        PRINT_ERR()              \
-    }
+#define HIP_CHECK(command)         \
+    do                             \
+    {                              \
+        hipError_t _e = (command); \
+        if (_e != hipSuccess)      \
+        {                          \
+            PRINT_ERR(_e)          \
+            std::abort();          \
+        }                          \
+    }                              \
+    while (0)
 
 #define calculate_bandwidth(size, count, ms) \
     (std::round(((size * count) / 1000000000.0) / (ms / 1000.0) * 100.0) / 100.0)
@@ -53,9 +74,10 @@ enum class CopyAgentPolicy
 struct config
 {
     int      device_count;
-    uint32_t iterations = (1 << 4);
-    uint32_t bw_bytes   = (512 << 20);
-    uint32_t lat_bytes  = sizeof(void*);
+    uint32_t iterations   = (16 << 0);
+    uint32_t bw_bufsize   = (512 << 20);
+    uint32_t lat_bufsize  = (2 << 20);
+    uint32_t lat_accesses = 1000000;
 };
 
 struct DeviceGuard

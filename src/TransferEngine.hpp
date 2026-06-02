@@ -9,23 +9,23 @@
 class TransferEngine
 {
 public:
-    TransferEngine(std::unique_ptr<TransferExecutor> executor, uint64_t iterations)
-        : _executor(std::move(executor)), _iterations(iterations)
-    {}
+    explicit TransferEngine(uint64_t iterations) : _iterations(iterations) {}
+    virtual ~TransferEngine() = default;
 
-    virtual auto sequentialBidirectional(const std::vector<const Buffer*>& buffers,
-                                         const std::vector<const Buffer*>& peerBuffers,
-                                         CopyAgentPolicy                   agent) -> double = 0;
+    // virtual auto computeExecutionOutput(float time, ) -> double = 0;
 
-    virtual auto
-        concurrentBidirectional(const std::vector<std::vector<const Buffer*>>& bufferPairs,
-                                const std::vector<std::vector<const Buffer*>>& peerBufferPairs,
-                                CopyAgentPolicy                                agent,
-                                std::vector<double>*                           bws) -> void = 0;
+    auto sequentialBidirectional(const std::vector<const Buffer*>& buffers,
+                                 const std::vector<const Buffer*>& peerBuffers,
+                                 CopyAgentPolicy                   agent) -> double;
 
-    auto sequentialUnidirectional(const Buffer&   buffer,
-                                  const Buffer&   peerBuffer,
-                                  CopyAgentPolicy agent) -> double;
+    auto concurrentBidirectional(const std::vector<std::vector<const Buffer*>>& bufferPairs,
+                                 const std::vector<std::vector<const Buffer*>>& peerBufferPairs,
+                                 CopyAgentPolicy                                agent,
+                                 std::vector<double>*                           bws) -> void;
+
+    virtual auto sequentialUnidirectional(const Buffer&   buffer,
+                                          const Buffer&   peerBuffer,
+                                          CopyAgentPolicy agent) -> double;
 
     auto concurrentUnidirectional(const std::vector<const Buffer*>& buffers,
                                   const std::vector<const Buffer*>& peerBuffers,
@@ -49,30 +49,54 @@ protected:
                            const std::vector<const Buffer*>& destinations,
                            std::vector<hipStream_t>&         streams,
                            std::vector<hipEvent_t>&          startEvents,
-                           std::vector<hipEvent_t>&          endEvents) -> void;
+                           std::vector<hipEvent_t>&          endEvents,
+                           std::vector<uint64_t>&            bytesCopied) -> void;
 
     auto _cleanupTransfers(std::vector<hipStream_t>& streams,
                            std::vector<hipEvent_t>&  startEvents,
                            std::vector<hipEvent_t>&  endEvents) -> void;
 
-    auto _verify(const std::vector<const Buffer*>& buffers) -> bool;
+    auto _verify(const std::vector<const Buffer*>& buffers,
+                 std::vector<uint64_t>             bytesCopied) -> bool;
+
+private:
 };
 
-class SystemDMAEngine : public TransferEngine
+class LatencyTransferEngine : public TransferEngine
 {
 public:
-    using TransferEngine::concurrentUnidirectional;
-    using TransferEngine::sequentialUnidirectional;
-    SystemDMAEngine(std::unique_ptr<TransferExecutor> executor, uint64_t iterations)
-        : TransferEngine(std::move(executor), iterations)
-    {}
+    explicit LatencyTransferEngine(uint64_t iterations) : TransferEngine(iterations)
+    {
+        _executor = std::make_unique<LatencyExecutor>(0xDeadBeefCafeBabeULL);
+    }
+    ~LatencyTransferEngine() override = default;
 
-    auto sequentialBidirectional(const std::vector<const Buffer*>& buffers,
-                                 const std::vector<const Buffer*>& peerBuffers,
-                                 CopyAgentPolicy                   agent) -> double override;
+    auto sequentialUnidirectional(const Buffer&   buffer,
+                                  const Buffer&   peerBuffer,
+                                  CopyAgentPolicy agent) -> double override;
+};
 
-    auto concurrentBidirectional(const std::vector<std::vector<const Buffer*>>& buffers,
-                                 const std::vector<std::vector<const Buffer*>>& peerBuffers,
-                                 CopyAgentPolicy                                agent,
-                                 std::vector<double>* bws) -> void override;
+class BandwidthTransferEngine : public TransferEngine
+{
+public:
+    explicit BandwidthTransferEngine(uint64_t iterations) : TransferEngine(iterations) {}
+    ~BandwidthTransferEngine() override = default;
+};
+
+class SystemDMATransferEngine : public BandwidthTransferEngine
+{
+public:
+    explicit SystemDMATransferEngine(uint64_t iterations) : BandwidthTransferEngine(iterations)
+    {
+        _executor = std::make_unique<SystemDMAExecutor>(0xDeadBeefCafeBabeULL);
+    };
+};
+
+class ComputeUnitTransferEngine : public BandwidthTransferEngine
+{
+public:
+    explicit ComputeUnitTransferEngine(uint64_t iterations) : BandwidthTransferEngine(iterations)
+    {
+        _executor = std::make_unique<ComputeUnitExecutor>(0xDeadBeefCafeBabeULL);
+    };
 };

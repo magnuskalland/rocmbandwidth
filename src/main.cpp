@@ -1,14 +1,9 @@
-#include <boost/assign/std/vector.hpp>
-#include <boost/program_options.hpp>
 #include <cstdlib>
 #include <iostream>
 
 #include "Testcase.hpp"
 #include "common.h"
 #include "hip/hip_runtime.h"
-
-namespace po = boost::program_options;
-using namespace boost::assign;
 
 struct config conf;
 
@@ -19,13 +14,14 @@ void print_device_info()
     {
         hipDeviceProp_t p;
         HIP_EXIT_ON_FAILURE(hipGetDeviceProperties(&p, i));
-        printf("\t%d: %04x:%02x:%02d.0 %-25s %8ldM\n",
+        printf("\t%d: %04x:%02x:%02d.0 %-25s (%ldM memory, %d CUs)\n",
                i,
                p.pciDomainID,
                p.pciBusID,
                p.pciDeviceID,
                p.name,
-               p.totalGlobalMem >> 20);
+               p.totalGlobalMem >> 20,
+               p.multiProcessorCount);
     }
     printf("\n");
 }
@@ -34,50 +30,50 @@ void print_config(const config& cfg)
 {
     printf("Configuration:\n");
     printf("\tMeasurement iterations:           %-4d\n", cfg.iterations);
-    printf("\tBandwidth-bound transfer size:    %-4dM\n", cfg.bw_bytes >> 20);
-    // printf("\tLatency-bound transfer size:      %-4d\n", cfg.lat_bytes);
+    printf("\tBandwidth-bound transfer size:    %-4dM\n", cfg.bw_bufsize >> 20);
+    printf("\tLatency-bound transfer size:      %-4d\n", cfg.lat_accesses);
 }
 
 auto create_config(int argc, char** argv) -> int
 {
-    po::options_description desc("rocmbandwidth options");
-    po::variables_map       vm;
+    // po::options_description desc("rocmbandwidth options");
+    // po::variables_map       vm;
 
-    desc.add_options()
-        /* --help / -h: conventional flag; no value, just a boolean presence. */
-        ("help,h", "Print this help message and exit")
+    // desc.add_options()
+    //     /* --help / -h: conventional flag; no value, just a boolean presence. */
+    //     ("help,h", "Print this help message and exit")
 
-        /* --size / -s: bandwidth transfer size in MBs. */
-        ("size,s",
-         po::value<uint64_t>()->default_value(conf.bw_bytes),
-         ("Transfer size for bandwidth measurements in MB (default: "
-          + std::to_string(conf.bw_bytes >> 20) + ")")
-             .c_str())
+    //     /* --size / -s: bandwidth transfer size in MBs. */
+    //     ("size,s",
+    //      po::value<uint64_t>()->default_value(conf.bw_bufsize),
+    //      ("Transfer size for bandwidth measurements in MB (default: "
+    //       + std::to_string(conf.bw_bufsize >> 20) + ")")
+    //          .c_str())
 
-        /* --iterations / -n: how many timed repetitions to run. */
-        ("iterations,n",
-         po::value<uint64_t>()->default_value(conf.iterations),
-         ("Number of timed iterations (default: " + std::to_string(conf.iterations) + ")").c_str());
+    //     /* --iterations / -n: how many timed repetitions to run. */
+    //     ("iterations,n",
+    //      po::value<uint64_t>()->default_value(conf.iterations),
+    //      ("Number of timed iterations (default: " + std::to_string(conf.iterations) + ")").c_str());
 
-    try
-    {
-        po::store(po::parse_command_line(argc, argv, desc), vm);
-        po::notify(vm);
-    }
-    catch (const po::error& e)
-    {
-        fprintf(stderr, "Argument error: %s\n\n", e.what());
-        std::cerr << desc << "\n";
-        exit(EXIT_FAILURE);
-    }
+    // try
+    // {
+    //     po::store(po::parse_command_line(argc, argv, desc), vm);
+    //     po::notify(vm);
+    // }
+    // catch (const po::error& e)
+    // {
+    //     fprintf(stderr, "Argument error: %s\n\n", e.what());
+    //     std::cerr << desc << "\n";
+    //     exit(EXIT_FAILURE);
+    // }
 
-    if (vm.count("help"))
-    {
-        std::cout << desc << "\n";
-        exit(EXIT_SUCCESS);
-    }
+    // if (vm.count("help"))
+    // {
+    //     std::cout << desc << "\n";
+    //     exit(EXIT_SUCCESS);
+    // }
 
-    HIP_EXIT_ON_FAILURE(hipGetDeviceCount(&conf.device_count));
+    // HIP_EXIT_ON_FAILURE(hipGetDeviceCount(&conf.device_count));
     return 0;
 }
 
@@ -120,35 +116,63 @@ void enable_p2p()
 
 auto main(int argc, char** argv) -> int
 {
-    std::vector<std::unique_ptr<Testcase>> bandwidthTestcases;
+    std::vector<std::unique_ptr<Testcase>> testcases;
 
     create_config(argc, argv);
     print_config(conf);
     print_device_info();
     enable_p2p();
 
-    // bandwidthTestcases += std::make_unique<BandwidthHostToDeviceUnidir>();
-    // bandwidthTestcases += std::make_unique<BandwidthHostToDeviceBidir>();
-    // bandwidthTestcases += std::make_unique<BandwidthDeviceToHostUnidir>();
-    // bandwidthTestcases += std::make_unique<BandwidthDeviceToHostBidir>();
-    // bandwidthTestcases += std::make_unique<BandwidthDeviceLocalCopy>();
-    // bandwidthTestcases += std::make_unique<BandwidthDeviceToDeviceUnidirWrite>();
-    // bandwidthTestcases += std::make_unique<BandwidthDeviceToDeviceBidirWrite>();
-    // bandwidthTestcases += std::make_unique<BandwidthDeviceToDeviceUnidirRead>();
-    // bandwidthTestcases += std::make_unique<BandwidthDeviceToDeviceBidirRead>();
-    // bandwidthTestcases += std::make_unique<BandwidthHostToAllUnidir>();
-    // bandwidthTestcases += std::make_unique<BandwidthHostToAllBidir>();
-    // bandwidthTestcases += std::make_unique<BandwidthAllToHostUnidir>();
-    // bandwidthTestcases += std::make_unique<BandwidthAllToHostBidir>();
-    // bandwidthTestcases += std::make_unique<BandwidthDeviceToAllWrite>();
-    bandwidthTestcases += std::make_unique<BandwidthDeviceToAllRead>();
-    // bandwidthTestcases += std::make_unique<BandwidthDeviceRingWrite>();
-    // bandwidthTestcases += std::make_unique<BandwidthDeviceRingRead>();
+    testcases.push_back(std::make_unique<LatencyHostToDevice>(conf));
+    // testcases.push_back(std::make_unique<LatencyDeviceToDevice>(conf));
 
-    for (auto& tc : bandwidthTestcases)
+    testcases.push_back(std::make_unique<SDMABandwidthHostToDeviceUnidir>(conf));
+    testcases.push_back(std::make_unique<SDMABandwidthHostToDeviceBidir>(conf));
+    testcases.push_back(std::make_unique<SDMABandwidthDeviceToHostUnidir>(conf));
+    testcases.push_back(std::make_unique<SDMABandwidthDeviceToHostBidir>(conf));
+    testcases.push_back(std::make_unique<SDMABandwidthDeviceLocalCopy>(conf));
+    testcases.push_back(std::make_unique<SDMABandwidthDeviceToDeviceUnidirWrite>(conf));
+    testcases.push_back(std::make_unique<SDMABandwidthDeviceToDeviceUnidirRead>(conf));
+    testcases.push_back(std::make_unique<SDMABandwidthDeviceToDeviceBidirWrite>(conf));
+    testcases.push_back(
+        std::make_unique<SDMABandwidthDeviceToDeviceBidirRead>(conf)); /* TODO: remove */
+    testcases.push_back(std::make_unique<SDMABandwidthHostToAllUnidir>(conf));
+    testcases.push_back(std::make_unique<SDMABandwidthHostToAllBidir>(conf));
+    testcases.push_back(std::make_unique<SDMABandwidthAllToHostUnidir>(conf));
+    testcases.push_back(std::make_unique<SDMABandwidthAllToHostBidir>(conf));
+    testcases.push_back(std::make_unique<SDMABandwidthDeviceToAllWrite>(conf));
+    testcases.push_back(std::make_unique<SDMABandwidthDeviceToAllRead>(conf));
+    // testcases.push_back(std::make_unique<SDMABandwidthAllToDeviceWrite>(conf)); /* TODO: implement */
+    // testcases.push_back(std::make_unique<SDMABandwidthAllToDeviceRead>(conf)); /* TODO: implement */
+    testcases.push_back(std::make_unique<SDMABandwidthDeviceRingUnidirWrite>(conf));
+    testcases.push_back(std::make_unique<SDMABandwidthDeviceRingUnidirRead>(conf));
+    testcases.push_back(std::make_unique<SDMABandwidthDeviceRingBidirWrite>(conf));
+    testcases.push_back(std::make_unique<SDMABandwidthDeviceRingBidirRead>(conf));
+
+    testcases.push_back(std::make_unique<CUBandwidthHostToDeviceUnidir>(conf));
+    testcases.push_back(std::make_unique<CUBandwidthHostToDeviceBidir>(conf));
+    testcases.push_back(std::make_unique<CUBandwidthDeviceToHostUnidir>(conf));
+    testcases.push_back(std::make_unique<CUBandwidthDeviceToHostBidir>(conf));
+    testcases.push_back(std::make_unique<CUBandwidthDeviceLocalCopy>(conf));
+    testcases.push_back(std::make_unique<CUBandwidthDeviceToDeviceUnidirWrite>(conf));
+    testcases.push_back(std::make_unique<CUBandwidthDeviceToDeviceUnidirRead>(conf));
+    testcases.push_back(std::make_unique<CUBandwidthDeviceToDeviceBidirWrite>(conf));
+    testcases.push_back(std::make_unique<CUBandwidthDeviceToDeviceBidirRead>(conf));
+    testcases.push_back(std::make_unique<CUBandwidthHostToAllUnidir>(conf));
+    testcases.push_back(std::make_unique<CUBandwidthHostToAllBidir>(conf));
+    testcases.push_back(std::make_unique<CUBandwidthAllToHostUnidir>(conf));
+    testcases.push_back(std::make_unique<CUBandwidthAllToHostBidir>(conf));
+    testcases.push_back(std::make_unique<CUBandwidthDeviceToAllWrite>(conf));
+    testcases.push_back(std::make_unique<CUBandwidthDeviceToAllRead>(conf));
+    testcases.push_back(std::make_unique<CUBandwidthDeviceRingUnidirWrite>(conf));
+    testcases.push_back(std::make_unique<CUBandwidthDeviceRingUnidirRead>(conf));
+    testcases.push_back(std::make_unique<CUBandwidthDeviceRingBidirWrite>(conf));
+    testcases.push_back(std::make_unique<CUBandwidthDeviceRingBidirRead>(conf));
+
+    for (auto& tc : testcases)
     {
         printf("\nRunning %s\n", tc->getKey());
-        tc->execute(conf);
+        tc->execute();
         printf("%s", tc->getResult().c_str());
     }
 

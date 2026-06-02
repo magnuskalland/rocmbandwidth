@@ -1,10 +1,11 @@
 #include "common.h"
 #include "kernels.hpp"
+#include <cstring>
 #include <hip/hip_runtime.h>
 
 /* Util kernels */
 
-__global__ void spinKernelDevice(int dev, volatile int* latch, const uint64_t timeout)
+static __global__ void spinKernelDevice(int dev, volatile int* latch, const uint64_t timeout)
 {
     uint64_t endTime = clock64() + timeout;
     while (!*latch)
@@ -31,7 +32,7 @@ auto launchSpinKernel(int dev, volatile int* latch, hipStream_t stream, uint64_t
     return hipSuccess;
 }
 
-__global__ void memsetKernel(uint64_t* buf, uint64_t pattern, uint64_t count)
+static __global__ void memsetKernel(uint64_t* buf, uint64_t pattern, uint64_t count)
 {
     uint64_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < count)
@@ -47,7 +48,7 @@ void launchMemsetKernel(uint64_t* buf, uint64_t pattern, uint64_t count)
     memsetKernel<<<blocks, blockSize>>>(buf, pattern, count);
 }
 
-__global__ void verifyKernel(const uint64_t* buf, uint64_t pattern, uint64_t count, bool* ok)
+static __global__ void verifyKernel(const uint64_t* buf, uint64_t pattern, uint64_t count, bool* ok)
 {
     uint64_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < count && buf[idx] != pattern)
@@ -64,3 +65,143 @@ void launchVerifyKernel(const uint64_t* buf, uint64_t pattern, uint64_t count, b
 }
 
 /* Work kernels */
+
+template<int LD_ST_PIPELINES>
+static __global__ void copyKernel(const float4* src,
+                                  float4*       dst,
+                                  uint64_t      perThreadChunkCount,
+                                  uint64_t      stride,
+                                  uint64_t      iterations)
+{
+    uint64_t      offset    = blockDim.x * blockIdx.x + threadIdx.x;
+    const float4* offsetSrc = src + offset;
+    float4*       offsetDst = dst + offset;
+    float4*       pipelinedLoadEnd
+        = (offsetDst + ((perThreadChunkCount / LD_ST_PIPELINES) * LD_ST_PIPELINES) * stride);
+    float4* nonPipelinedLoadEnd = offsetDst + perThreadChunkCount * stride;
+
+    for (uint64_t iter = 0; iter < iterations; iter++)
+    {
+        const float4* loadAddress  = offsetSrc;
+        float4*       storeAddress = offsetDst;
+        float4        registers[LD_ST_PIPELINES];
+
+        /* Do pipelined load/stores */
+        while (storeAddress < pipelinedLoadEnd)
+        {
+#pragma unroll
+            for (int r = 0; r < LD_ST_PIPELINES; r++)
+            {
+                registers[r] = *loadAddress;
+                loadAddress  = loadAddress + stride;
+            }
+#pragma unroll
+            for (int r = 0; r < LD_ST_PIPELINES; r++)
+            {
+                *storeAddress = registers[r];
+                storeAddress  = storeAddress + stride;
+            }
+        }
+
+        /* Do the last load/stores that didn't fully fit in the pipeline slots */
+        while (storeAddress < nonPipelinedLoadEnd)
+        {
+            *storeAddress = *loadAddress;
+            storeAddress  = storeAddress + stride;
+            loadAddress   = loadAddress + stride;
+        }
+    }
+}
+
+auto launchCopyKernel(
+    const void* src, void* dst, size_t size, uint64_t iterations, hipStream_t stream) -> uint64_t
+{
+    hipDeviceProp_t p;
+    int             dev;
+    int             numComputeUnits;
+    int             threadsPerBlock;
+    int             totalThreads;
+    uint64_t        totalChunkCount;
+    uint64_t        realChunkCount;
+    uint64_t        perThreadChunkCount;
+
+    DeviceGuard guard;
+    HIP_CHECK(hipStreamGetDevice(stream, &dev));
+    HIP_CHECK(hipGetDeviceProperties(&p, dev));
+    HIP_CHECK(hipSetDevice(dev));
+
+    numComputeUnits     = p.multiProcessorCount;
+    threadsPerBlock     = 8;
+    totalThreads        = numComputeUnits * threadsPerBlock;
+    totalChunkCount     = size / sizeof(float4);
+    realChunkCount      = totalThreads * (totalChunkCount / totalThreads);
+    perThreadChunkCount = realChunkCount / totalThreads;
+
+    copyKernel<1>
+        <<<numComputeUnits, threadsPerBlock, 0, stream>>>(reinterpret_cast<const float4*>(src),
+                                                          reinterpret_cast<float4*>(dst),
+                                                          perThreadChunkCount,
+                                                          totalThreads,
+                                                          iterations);
+
+    return realChunkCount * sizeof(float4);
+}
+
+static __global__ void ptrChaseKernel(const node* buf, uint32_t accesses, int agent)
+{
+    if (blockIdx.x != agent)
+    {
+        return;
+    }
+
+    volatile const node* n = buf;
+    for (uint32_t i = 0; i < accesses; i++)
+    {
+        n = n->next;
+    }
+}
+
+auto launchPtrChaseKernel(const void* data,
+                          size_t      size,
+                          uint32_t    accesses,
+                          hipStream_t stream) -> uint64_t
+{
+    hipEvent_t      start, end;
+    int             dev;
+    float           totalSecs = 0.0;
+    int             numComputeUnits;
+    hipDeviceProp_t p;
+
+    HIP_CHECK(hipStreamGetDevice(stream, &dev));
+    HIP_CHECK(hipGetDeviceProperties(&p, dev));
+    numComputeUnits = p.multiProcessorCount;
+
+    HIP_CHECK(hipSetDevice(dev));
+    HIP_CHECK(hipEventCreate(&start));
+    HIP_CHECK(hipEventCreate(&end));
+
+    for (int cu = 0; cu < numComputeUnits; cu++)
+    {
+        float ms;
+        float secs;
+        HIP_CHECK(hipEventRecord(start, stream));
+        ptrChaseKernel<<<numComputeUnits, 1, 0, stream>>>(reinterpret_cast<const node*>(data),
+                                                          accesses / numComputeUnits,
+                                                          cu);
+        HIP_CHECK(hipEventRecord(end, stream));
+
+        HIP_CHECK(hipGetLastError());
+        HIP_CHECK(hipStreamSynchronize(stream));
+        HIP_CHECK(hipEventElapsedTime(&ms, start, end));
+
+        secs = ms / 1000.0;
+        totalSecs += secs;
+    }
+
+    uint64_t nanoSecondsPerAccess = (totalSecs * 1.0E9) / accesses;
+
+    HIP_CHECK(hipEventDestroy(start));
+    HIP_CHECK(hipEventDestroy(end));
+
+    return nanoSecondsPerAccess;
+}
