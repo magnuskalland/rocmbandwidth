@@ -255,6 +255,40 @@ void enable_p2p()
     }
 }
 
+/*
+ * Work around ROCm's SDMA engine assignment. On n016 (2x MI210, ROCm 7.2) the
+ * host<->device bidirectional SDMA tests measured either ~28 GB/s (both directions
+ * serialised on one copy engine) or ~50 GB/s (both directions running concurrently),
+ * depending only on what had run earlier in the process: the result was ~50 exactly
+ * when an earlier test had done a pageable host -> device hipMemcpy on the null
+ * stream (latency_device_to_device building its pointer chain). Doing such a copy on
+ * every device up front makes the bidirectional tests consistently measure the
+ * concurrent case, regardless of which tests are selected.
+ *
+ * Set ROCMBW_NO_SDMA_WARMUP=1 to skip it (for A/B comparisons).
+ */
+void warm_up_copy_engines()
+{
+    const char* skip = std::getenv("ROCMBW_NO_SDMA_WARMUP");
+    if (skip != nullptr && *skip != '\0' && *skip != '0')
+    {
+        printf("SDMA warm-up copy skipped (ROCMBW_NO_SDMA_WARMUP)\n");
+        return;
+    }
+
+    const size_t      size = 4ULL << 20;
+    std::vector<char> pageable(size, 0);
+    DeviceGuard       guard;
+    for (int dev = 0; dev < conf.device_count; dev++)
+    {
+        void* buf;
+        HIP_CHECK(hipSetDevice(dev));
+        HIP_CHECK(hipMalloc(&buf, size));
+        HIP_CHECK(hipMemcpy(buf, pageable.data(), size, hipMemcpyDefault));
+        HIP_CHECK(hipFree(buf));
+    }
+}
+
 auto main(int argc, char** argv) -> int
 {
     std::vector<std::unique_ptr<Testcase>> testcases;
@@ -329,6 +363,7 @@ auto main(int argc, char** argv) -> int
     print_config(conf);
     print_device_info();
     enable_p2p();
+    warm_up_copy_engines();
 
     for (auto& tc : testcases)
     {
