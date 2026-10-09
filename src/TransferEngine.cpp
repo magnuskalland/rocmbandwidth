@@ -136,6 +136,7 @@ auto LatencyTransferEngine::sequentialUnidirectional(const Buffer&   buffer,
 
     _prepareSourceBuffers({&buffer});
 
+    DeviceGuard guard;
     HIP_CHECK(hipSetDevice(agent));
     HIP_CHECK(hipStreamCreate(&stream));
     lat = _executor->execute(buffer.getBuffer(),
