@@ -31,7 +31,8 @@ auto TransferExecutor::getAgent(const Buffer& src, const Buffer& dst, CopyAgentP
 auto TransferExecutor::resetStreams() -> void
 {
     /* Closed latch */
-    *_latch = 0;
+    *_latch    = 0;
+    *_timedOut = 0;
 }
 
 auto TransferExecutor::blockStreams(std::vector<hipStream_t> streams) -> void
@@ -40,8 +41,13 @@ auto TransferExecutor::blockStreams(std::vector<hipStream_t> streams) -> void
     {
         int dev;
         HIP_CHECK(hipStreamGetDevice(stream, &dev));
-        launchSpinKernel(dev, _latch, stream, 1000);
+        launchSpinKernel(dev, _latch, _timedOut, stream, 1000);
     }
+}
+
+auto TransferExecutor::blockTimedOut() const -> bool
+{
+    return *_timedOut != 0;
 }
 
 auto TransferExecutor::unblockStreams() -> void

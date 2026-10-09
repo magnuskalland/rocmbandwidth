@@ -17,11 +17,14 @@ public:
     explicit TransferExecutor(uint64_t pattern) : _sourcePattern(pattern)
     {
         HIP_CHECK(hipHostMalloc((void**)&_latch, sizeof(int), hipHostMallocDefault));
+        HIP_CHECK(hipHostMalloc((void**)&_timedOut, sizeof(int), hipHostMallocDefault));
+        *_timedOut = 0;
     }
 
     virtual ~TransferExecutor()
     {
         HIP_CHECK(hipHostFree((void*)_latch));
+        HIP_CHECK(hipHostFree((void*)_timedOut));
     }
 
     virtual auto execute(const void* src,
@@ -37,12 +40,16 @@ public:
     auto resetStreams() -> void;
     auto blockStreams(std::vector<hipStream_t> streams) -> void;
     auto unblockStreams() -> void;
+    /* True if any spin kernel gave up waiting since the last resetStreams(). Call only after
+     * the streams have been synchronised. */
+    auto blockTimedOut() const -> bool;
     auto resetDestBuffer(void* buf, uint64_t size) -> void;
 
 protected:
     uint64_t      _sourcePattern;
     uint64_t      _clearPattern = 0ULL;
     volatile int* _latch;
+    volatile int* _timedOut;
 
 private:
     auto _memset(void* buf, uint64_t size, uint64_t pattern) -> void;

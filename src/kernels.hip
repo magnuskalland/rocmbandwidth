@@ -7,7 +7,10 @@
 
 /* Util kernels */
 
-static __global__ void spinKernelDevice(int dev, volatile int* latch, const uint64_t timeout)
+static __global__ void spinKernelDevice(int            dev,
+                                        volatile int*  latch,
+                                        volatile int*  timedOut,
+                                        const uint64_t timeout)
 {
     uint64_t endTime = clock64() + timeout;
     while (!*latch)
@@ -15,12 +18,17 @@ static __global__ void spinKernelDevice(int dev, volatile int* latch, const uint
         if (timeout != ~0ULL && clock64() > endTime)
         {
             printf("error: spin kernel timed out on device %d\n", dev);
+            *timedOut = 1;
             break;
         }
     }
 }
 
-auto launchSpinKernel(int dev, volatile int* latch, hipStream_t stream, uint64_t timeoutMs) -> int
+auto launchSpinKernel(int           dev,
+                      volatile int* latch,
+                      volatile int* timedOut,
+                      hipStream_t   stream,
+                      uint64_t      timeoutMs) -> int
 {
     DeviceGuard guard;
     int         clocksPerMs = 0;
@@ -28,7 +36,7 @@ auto launchSpinKernel(int dev, volatile int* latch, hipStream_t stream, uint64_t
     uint64_t timeout = static_cast<uint64_t>(clocksPerMs) * timeoutMs;
 
     HIP_CHECK(hipSetDevice(dev));
-    spinKernelDevice<<<1, 1, 0, stream>>>(dev, latch, timeout);
+    spinKernelDevice<<<1, 1, 0, stream>>>(dev, latch, timedOut, timeout);
 
     HIP_CHECK(hipGetLastError());
     return hipSuccess;

@@ -10,7 +10,11 @@ struct node
 
 /* Util kernels */
 
-auto launchSpinKernel(int dev, volatile int* latch, hipStream_t stream, uint64_t timeoutMs) -> int;
+auto launchSpinKernel(int           dev,
+                      volatile int* latch,
+                      volatile int* timedOut,
+                      hipStream_t   stream,
+                      uint64_t      timeoutMs) -> int;
 void launchMemsetKernel(uint64_t* buf, uint64_t pattern, uint64_t count);
 void launchVerifyKernel(const uint64_t* buf, uint64_t pattern, uint64_t count, bool* ok);
 

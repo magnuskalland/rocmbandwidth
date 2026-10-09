@@ -229,6 +229,15 @@ auto TransferEngine::sequentialBidirectional(const std::vector<const Buffer*>& b
         HIP_RETURN_DOUBLE_ON_FAILURE(hipStreamSynchronize(streams[i]));
     }
 
+    /* If a spin kernel gave up before the host released it, the streams didn't start together
+     * (usually because enqueueing the transfers blocked on the host), so the timing is invalid */
+    if (_executor->blockTimedOut())
+    {
+        fprintf(stderr, "error: streams were released by the spin-kernel timeout; result invalid\n");
+        _cleanupTransfers(streams, startEvents, endEvents);
+        return 0.0;
+    }
+
     /* Verify destination buffers */
     ok = _verify(destinationBuffers, bytesCopied);
     if (!ok)
@@ -357,6 +366,17 @@ auto TransferEngine::concurrentBidirectional(
         {
             HIP_RETURN_VOID_ON_FAILURE(hipStreamSynchronize(streamPairs.at(i).at(j)));
         }
+    }
+
+    /* See sequentialBidirectional(): a spin-kernel timeout invalidates the timing */
+    if (_executor->blockTimedOut())
+    {
+        fprintf(stderr, "error: streams were released by the spin-kernel timeout; result invalid\n");
+        for (int i = 0; i < pairSize; i++)
+        {
+            _cleanupTransfers(streamPairs.at(i), startEventPairs.at(i), endEventPairs.at(i));
+        }
+        return;
     }
 
     /* Verify destination buffers */
