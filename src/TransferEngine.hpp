@@ -21,7 +21,8 @@ public:
     auto concurrentBidirectional(const std::vector<std::vector<const Buffer*>>& bufferPairs,
                                  const std::vector<std::vector<const Buffer*>>& peerBufferPairs,
                                  CopyAgentPolicy                                agent,
-                                 std::vector<double>*                           bws) -> void;
+                                 std::vector<double>*                           bws,
+                                 double* aggregate = nullptr) -> void;
 
     virtual auto sequentialUnidirectional(const Buffer&   buffer,
                                           const Buffer&   peerBuffer,
@@ -30,7 +31,8 @@ public:
     auto concurrentUnidirectional(const std::vector<const Buffer*>& buffers,
                                   const std::vector<const Buffer*>& peerBuffers,
                                   CopyAgentPolicy                   agent,
-                                  std::vector<double>*              bws) -> void;
+                                  std::vector<double>*              bws,
+                                  double*                           aggregate = nullptr) -> void;
 
 protected:
     std::unique_ptr<TransferExecutor> _executor;

@@ -172,7 +172,10 @@ issued from the **destination** GPU's context (a pull) — see
 `CopyAgentPolicy` in `src/common.h` / `TransferExecutor::getAgent()` if you
 want the exact rules. "Sequential" tests measure one link per invocation;
 "Concurrent" tests launch every listed link at once on separate streams and
-report a per-link breakdown plus a `Sum:` aggregate.
+report a per-link breakdown plus an `Aggregate:` line. All transfers in a test
+start from a common barrier; a link's figure is its total bytes over the time
+until its slowest direction finished, and the aggregate is all bytes over the
+time until the last transfer finished (not the sum of the per-link numbers).
 
 | Category | Pattern | Mode | Keys run (`sdma_bw_…` / `cu_bw_…`) |
 |---|---|---|---|
@@ -227,7 +230,7 @@ Running sdma_bw_host_to_device_unidir
 Running cu_bw_device_to_all_write
         GPU 0 -> GPU 0: 0.00 GB/s
         GPU 0 -> GPU 1: 41.72 GB/s
-        Sum: 41.72 GB/s
+        Aggregate: 41.72 GB/s
 ...
 ```
 

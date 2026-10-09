@@ -73,9 +73,9 @@ void addToOutput(std::stringstream&                output,
 void addToOutput(std::stringstream&                output,
                  const std::vector<const Buffer*>& buffers,
                  const std::vector<const Buffer*>& peerBuffers,
-                 std::vector<double>               bandwidths)
+                 std::vector<double>               bandwidths,
+                 double                            aggregate)
 {
-    double sum = 0.0;
     for (size_t i = 0; i < buffers.size(); i++)
     {
         int    dev1 = buffers.at(i)->getDevice();
@@ -93,17 +93,16 @@ void addToOutput(std::stringstream&                output,
         {
             output << "\tGPU " << dev1 << " -> GPU " << dev2 << ": " << bw << " GB/s\n";
         }
-        sum += bw;
     }
-    output << "\tSum: " << sum << " GB/s\n";
+    output << "\tAggregate: " << aggregate << " GB/s\n";
 }
 
 void addToOutput(std::stringstream&                             output,
                  const std::vector<std::vector<const Buffer*>>& bufferPairs,
                  const std::vector<std::vector<const Buffer*>>& peerBufferPairs,
-                 std::vector<double>*                           bandwidths)
+                 std::vector<double>*                           bandwidths,
+                 double                                         aggregate)
 {
-    double sum = 0.0;
     for (size_t dev = 0; dev < bufferPairs.at(0).size(); dev++)
     {
         int    dev1 = bufferPairs.at(0).at(dev)->getDevice();
@@ -121,9 +120,8 @@ void addToOutput(std::stringstream&                             output,
         {
             output << "\tGPU " << dev1 << " <-> GPU " << dev2 << ": " << bw << " GB/s\n";
         }
-        sum += bandwidths->at(dev);
     }
-    output << "\tSum: " << sum << " GB/s\n";
+    output << "\tAggregate: " << aggregate << " GB/s\n";
 }
 
 void SequentialUnidirectionalTestcase::runEngine(const Buffer&   buffer,
@@ -147,8 +145,9 @@ void ConcurrentUnidirectionalTestcase::runEngine(const std::vector<const Buffer*
                                                  CopyAgentPolicy                   policy)
 {
     std::vector<double> bandwidths(buffers.size());
-    _engine->concurrentUnidirectional(buffers, peerBuffers, policy, &bandwidths);
-    addToOutput(_output, buffers, peerBuffers, bandwidths);
+    double              aggregate = 0.0;
+    _engine->concurrentUnidirectional(buffers, peerBuffers, policy, &bandwidths, &aggregate);
+    addToOutput(_output, buffers, peerBuffers, bandwidths, aggregate);
 };
 
 void ConcurrentBidirectionalTestcase::runEngine(
@@ -157,8 +156,9 @@ void ConcurrentBidirectionalTestcase::runEngine(
     CopyAgentPolicy                                policy)
 {
     std::vector<double> bandwidths(bufferPairs.at(0).size());
-    _engine->concurrentBidirectional(bufferPairs, peerBufferPairs, policy, &bandwidths);
-    addToOutput(_output, bufferPairs, peerBufferPairs, &bandwidths);
+    double              aggregate = 0.0;
+    _engine->concurrentBidirectional(bufferPairs, peerBufferPairs, policy, &bandwidths, &aggregate);
+    addToOutput(_output, bufferPairs, peerBufferPairs, &bandwidths, aggregate);
 };
 
 void LatencyTestCase::runEngine(const Buffer&   buffer,

@@ -3,6 +3,7 @@
 #include "Buffer.hpp"
 #include "common.h"
 
+#include <algorithm>
 #include <cmath>
 
 auto TransferEngine::_prepareSourceBuffers(const std::vector<const Buffer*>& buffers) -> void
@@ -145,9 +146,10 @@ auto TransferEngine::sequentialUnidirectional(const Buffer&   buffer,
 auto TransferEngine::concurrentUnidirectional(const std::vector<const Buffer*>& buffers,
                                               const std::vector<const Buffer*>& peerBuffers,
                                               CopyAgentPolicy                   agent,
-                                              std::vector<double>*              bws) -> void
+                                              std::vector<double>*              bws,
+                                              double*                           aggregate) -> void
 {
-    concurrentBidirectional({buffers}, {peerBuffers}, agent, bws);
+    concurrentBidirectional({buffers}, {peerBuffers}, agent, bws, aggregate);
 }
 
 auto LatencyTransferEngine::sequentialUnidirectional(const Buffer&   buffer,
@@ -235,13 +237,19 @@ auto TransferEngine::sequentialBidirectional(const std::vector<const Buffer*>& b
         return 0.0;
     }
 
+    /* All transfers start at a common barrier, so the combined bandwidth is the total number of
+     * bytes over the time until the last transfer finished. Summing per-transfer bandwidths
+     * instead would over-count whenever the transfers don't finish at the same time. */
+    uint64_t totalBytes = 0;
+    float    maxTime    = 0.0f;
     for (int i = 0; i < nBuffers; i++)
     {
         HIP_RETURN_DOUBLE_ON_FAILURE(
             hipEventElapsedTime(&times.at(i), startEvents.at(i), endEvents.at(i)));
-        double bandwidth = calculate_bandwidth(bytesCopied[i], _iterations, times.at(i));
-        totalBandwidth += bandwidth;
+        totalBytes += bytesCopied[i];
+        maxTime = std::max(maxTime, times.at(i));
     }
+    totalBandwidth = calculate_bandwidth(totalBytes, _iterations, maxTime);
 
     _cleanupTransfers(streams, startEvents, endEvents);
 
@@ -252,7 +260,8 @@ auto TransferEngine::concurrentBidirectional(
     const std::vector<std::vector<const Buffer*>>& bufferPairs,
     const std::vector<std::vector<const Buffer*>>& peerBufferPairs,
     CopyAgentPolicy                                policy,
-    std::vector<double>*                           bandwidths) -> void
+    std::vector<double>*                           bandwidths,
+    double*                                        aggregate) -> void
 {
     /* Pair size is 1 if called from concurrentUnidirectional and 2 if called raw */
     int pairSize = static_cast<int>(bufferPairs.size());
@@ -364,19 +373,31 @@ auto TransferEngine::concurrentBidirectional(
         }
     }
 
+    /* Every transfer starts at the common barrier, so a link's bandwidth is its total bytes over
+     * the time until its slowest direction finished, and the aggregate is all bytes over the
+     * time until the very last transfer finished. Summing per-transfer bandwidths would
+     * over-count whenever transfers sharing a link or copy engine finish at different times. */
+    uint64_t allBytes   = 0;
+    float    allMaxTime = 0.0f;
     for (int i = 0; i < nBuffers; i++)
     {
-        (*bandwidths)[i] = 0.0;
+        uint64_t linkBytes   = 0;
+        float    linkMaxTime = 0.0f;
         for (int j = 0; j < pairSize; j++)
         {
-            float  time;
-            double bandwidth;
-
+            float time;
             HIP_RETURN_VOID_ON_FAILURE(
                 hipEventElapsedTime(&time, startEventPairs.at(j).at(i), endEventPairs.at(j).at(i)));
-            bandwidth = calculate_bandwidth(bytesCopied[i], _iterations, time);
-            (*bandwidths)[i] += bandwidth;
+            linkBytes += bytesCopied[i];
+            linkMaxTime = std::max(linkMaxTime, time);
         }
+        (*bandwidths)[i] = calculate_bandwidth(linkBytes, _iterations, linkMaxTime);
+        allBytes += linkBytes;
+        allMaxTime = std::max(allMaxTime, linkMaxTime);
+    }
+    if (aggregate != nullptr)
+    {
+        *aggregate = calculate_bandwidth(allBytes, _iterations, allMaxTime);
     }
 
     for (int i = 0; i < pairSize; i++)
