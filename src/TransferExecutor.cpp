@@ -7,26 +7,25 @@
 
 auto TransferExecutor::getAgent(const Buffer& src, const Buffer& dst, CopyAgentPolicy agent) -> int
 {
-    if (agent == CopyAgentPolicy::SOURCE)
+    /* Host memory can't issue a transfer, so a host-side buffer always falls back to the
+     * GPU at the other end. Bidirectional tests swap source/destination for the reverse
+     * direction, so the compound policies reduce to "issue from the source" (write/push)
+     * or "issue from the destination" (read/pull) of each individual transfer. */
+    bool pull = false;
+    switch (agent)
     {
-        return src.getDevice();
+        case CopyAgentPolicy::DESTINATION:
+        case CopyAgentPolicy::DESTINATION_AND_SOURCE: pull = true; break;
+        case CopyAgentPolicy::HOST:
+        case CopyAgentPolicy::SOURCE:
+        case CopyAgentPolicy::SOURCE_AND_HOST:
+        case CopyAgentPolicy::HOST_AND_DESTINATION:
+        case CopyAgentPolicy::SOURCE_AND_DESTINATION: pull = false; break;
     }
 
-    if (agent == CopyAgentPolicy::DESTINATION)
-    {
-        if (dst.getDevice() == -1)
-        {
-            return src.getDevice();
-        }
-        return dst.getDevice();
-    }
-
-    if (src.getDevice() == -1)
-    {
-        return dst.getDevice();
-    }
-
-    return src.getDevice();
+    const Buffer& preferred = pull ? dst : src;
+    const Buffer& fallback  = pull ? src : dst;
+    return preferred.getDevice() != -1 ? preferred.getDevice() : fallback.getDevice();
 }
 
 auto TransferExecutor::resetStreams() -> void
