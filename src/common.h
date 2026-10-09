@@ -92,14 +92,3 @@ struct DeviceGuard
         HIP_EXIT_ON_FAILURE(hipSetDevice(previous));
     }
 };
-
-inline auto supportsUnifiedAddressing(int dev) -> bool
-{
-    if (dev == -1)
-    {
-        return false;
-    }
-    hipDeviceProp_t p;
-    HIP_EXIT_ON_FAILURE(hipGetDeviceProperties(&p, dev));
-    return p.unifiedAddressing;
-}

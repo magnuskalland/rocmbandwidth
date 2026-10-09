@@ -67,7 +67,7 @@ auto TransferEngine::_enqueueTransfers(const std::vector<const Buffer*>& sources
 
     for (size_t i = 0; i < nBuffers; i++)
     {
-        HIP_RETURN_VOID_ON_FAILURE(hipStreamWaitEvent(streams[0], endEvents[i]));
+        HIP_RETURN_VOID_ON_FAILURE(hipStreamWaitEvent(streams[0], endEvents[i], 0));
     }
 }
 
