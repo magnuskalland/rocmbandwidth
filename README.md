@@ -9,9 +9,9 @@ generally backed by the GPU's DMA/SDMA copy engines) and a hand-written HIP
 kernel that drives the copy from the GPU's compute units directly.
 
 > **Note on scope:** this README documents the tool as it exists in this
-> source tree, including a few rough edges (disabled CLI parsing, one
-> unimplemented test category) that are called out explicitly below so you
-> don't go looking for flags or tests that aren't actually wired up yet.
+> source tree, including a few rough edges (one unimplemented test category)
+> that are called out explicitly below so you don't go looking for tests that
+> aren't actually wired up yet.
 
 ## Contents
 
@@ -21,7 +21,7 @@ kernel that drives the copy from the GPU's compute units directly.
   - [Building](#building)
     - [CMake configuration options](#cmake-configuration-options)
   - [Running](#running)
-  - [Configuring a run (no CLI flags yet)](#configuring-a-run-no-cli-flags-yet)
+  - [Command-line options](#command-line-options)
   - [What gets measured](#what-gets-measured)
     - [Test catalog](#test-catalog)
   - [Reading the output](#reading-the-output)
@@ -41,12 +41,9 @@ kernel that drives the copy from the GPU's compute units directly.
 | `make` (or another CMake generator) | The examples below use the default "Unix Makefiles" generator; pass `-G Ninja` if you'd rather use Ninja. |
 | One or more AMD GPUs with the `amdgpu` driver loaded, and permission to access them (typically membership in the `render`/`video` groups) | Only needed to *run* the benchmark — building doesn't require a physical GPU, since HIP device code is cross-compiled for whatever `--offload-arch` values you request. |
 
-**Not required:** despite a couple of leftover comments in the CMake files
-that mention Boost (`Boost::filesystem`, `Boost::system`, "modern Boost
-headers"), the project does **not** currently call `find_package(Boost)`
-anywhere and does not link against Boost. You do not need Boost installed to
-build this tree today — see [Known limitations](#known-limitations) for
-context on why those comments exist.
+**Not required:** Boost. The project has no dependencies beyond ROCm/HIP
+and the C++ standard library; command-line parsing uses POSIX
+`getopt_long()`.
 
 ## Building
 
@@ -98,16 +95,18 @@ uses and aren't meant to be overridden.
 ./build/rocmbandwidth
 ```
 
-No arguments are needed (and, currently, none are read — see the next
-section). On startup the tool:
+No arguments are needed; see [Command-line options](#command-line-options)
+to change the transfer size, iteration count, or select a subset of tests.
+On startup the tool:
 
 1. Prints the active configuration (iteration count, transfer sizes).
 2. Enumerates and prints every visible GPU (`hipGetDeviceCount` /
    `hipGetDeviceProperties`).
 3. Attempts to enable peer-to-peer access between every ordered pair of
    GPUs, printing a line for any pair that doesn't support it.
-4. Runs the full built-in suite of ~39 test cases in a fixed order,
-   printing each test's key followed by its result(s) as it completes.
+4. Runs the built-in suite of ~39 test cases (or the subset selected with
+   `--tests`) in a fixed order, printing each test's key followed by its
+   result(s) as it completes.
 
 To restrict which GPUs are visible to a run without rebuilding, use HIP's
 standard environment variable, e.g.:
@@ -116,29 +115,31 @@ standard environment variable, e.g.:
 HIP_VISIBLE_DEVICES=0,1 ./build/rocmbandwidth
 ```
 
-## Configuring a run (no CLI flags yet)
+## Command-line options
 
-`main.cpp` contains a `create_config()` function with a complete
-Boost.Program_options-based parser sketched out — `--help`/`-h`,
-`--size`/`-s`, `--iterations`/`-n` — but the entire block is commented out,
-and the function otherwise ignores `argc`/`argv` entirely. **No
-command-line flags currently work**; the binary always runs with the
-compiled-in defaults below.
+| Flag | Default | Meaning |
+|---|---|---|
+| `-h`, `--help` | | Print usage and exit. |
+| `-s`, `--size SIZE` | `512M` | Buffer size used for every bandwidth test. Plain numbers are MiB; `K`, `M` and `G` suffixes are accepted (e.g. `-s 64`, `-s 2G`). Must be a multiple of 16 bytes. |
+| `-n`, `--iterations N` | `16` | Timed copy repetitions per bandwidth measurement (plus 4 untimed warm-up copies issued beforehand on the same stream). |
+| `-t`, `--tests PATTERNS` | all | Only run tests whose key contains one of the comma-separated substrings, e.g. `-t sdma_bw_host,latency`. |
+| `-l`, `--list` | | Print every test key and exit. |
 
-To change these, edit the `config` struct's default member initializers in
-`src/common.h` and rebuild:
+Examples:
+
+```bash
+./build/rocmbandwidth --list
+./build/rocmbandwidth -s 64M -n 4                 # quick smoke run
+./build/rocmbandwidth -t device_to_device,ring    # only the GPU<->GPU tests
+```
+
+The latency test parameters aren't exposed as flags; change them in the
+`config` struct in `src/common.h` if needed:
 
 | Field | Default | Meaning |
 |---|---|---|
-| `iterations` | `16` | Timed copy repetitions per bandwidth measurement (plus 4 untimed warm-up copies issued beforehand on the same stream). |
-| `bw_bufsize` | `512 << 20` (512 MiB) | Buffer size used for every bandwidth test. |
 | `lat_bufsize` | `2 << 20` (2 MiB) | Buffer size used for the latency (pointer-chase) test. |
 | `lat_accesses` | `1,000,000` | Number of chained pointer dereferences performed per latency measurement. |
-
-If you want working CLI flags, the scaffolding in `main.cpp` is a
-reasonable starting point, but note that `find_package(Boost ...)` and
-linking `Boost::program_options` aren't set up anywhere in the current
-`CMakeLists.txt` files — that would need to be added first.
 
 ## What gets measured
 
@@ -246,8 +247,6 @@ interpreting `device_to_device_*` / `device_ring_*` results.
 
 ## Known limitations
 
-- **No working CLI flags** — see
-  [Configuring a run](#configuring-a-run-no-cli-flags-yet) above.
 - **`latency_device_to_device` is implemented but not run.** The
   `LatencyDeviceToDevice` test class exists in `src/Testcase.hpp`/`.cpp` and
   works the same way as the host↔device latency test, but its

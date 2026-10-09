@@ -12,8 +12,6 @@
 #
 #   Imported targets (from find_package calls in root CMakeLists.txt):
 #     hip::host          – ROCm runtime + HIP CPU-side headers
-#     Boost::filesystem  – Boost.Filesystem library + headers
-#     Boost::system      – Boost.System library + headers
 #
 # This file's sole job is to define the build target (the executable) and
 # describe its sources, include paths, compile flags, and link dependencies.
@@ -92,9 +90,6 @@ add_executable(${PROJECT_NAME}
 target_include_directories(${PROJECT_NAME}
     PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}"
-        # Boost::filesystem / Boost::system already carry their own include
-        # directories via the imported targets, so no explicit Boost path is
-        # needed here. Add other third-party include dirs below if required.
 )
 
 # ==============================================================================
@@ -136,10 +131,8 @@ target_compile_options(${PROJECT_NAME}
 #                      project; hip::device is handled internally by the HIP
 #                      language toolchain during device-code linking.
 #
-#   Boost::filesystem
-#   Boost::system    – these CMake imported targets resolve to the correct
-#                      .so / .a paths and carry -I flags automatically; no
-#                      manual ${Boost_LIBRARIES} variable is needed.
+#                    The project has no other external dependencies; command-line
+#                    parsing uses POSIX getopt_long().
 #
 # Add further ROCm libraries here as your project grows, e.g.:
 #   roc::rocblas     – rocBLAS (BLAS on GPU)
@@ -148,9 +141,6 @@ target_compile_options(${PROJECT_NAME}
 target_link_libraries(${PROJECT_NAME}
     PRIVATE
         hip::host
-        # Boost::program_options
-        # Boost::thread
-        # roc::rocblas
 )
 
 # ==============================================================================

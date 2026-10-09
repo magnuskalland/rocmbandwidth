@@ -73,10 +73,10 @@ enum class CopyAgentPolicy
 
 struct config
 {
-    int      device_count;
+    int      device_count = 0;
     uint32_t iterations   = (16 << 0);
-    uint32_t bw_bufsize   = (512 << 20);
-    uint32_t lat_bufsize  = (2 << 20);
+    uint64_t bw_bufsize   = (512ULL << 20);
+    uint64_t lat_bufsize  = (2ULL << 20);
     uint32_t lat_accesses = 1000000;
 };
 

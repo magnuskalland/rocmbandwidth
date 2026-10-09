@@ -1,5 +1,10 @@
+#include <algorithm>
 #include <cstdlib>
+#include <getopt.h>
 #include <iostream>
+#include <sstream>
+#include <string>
+#include <vector>
 
 #include "Testcase.hpp"
 #include "common.h"
@@ -30,52 +35,145 @@ void print_config(const config& cfg)
 {
     printf("Configuration:\n");
     printf("\tMeasurement iterations:           %u\n", cfg.iterations);
-    printf("\tBandwidth-bound transfer size:    %uM\n", cfg.bw_bufsize >> 20);
-    printf("\tLatency-bound transfer size:      %uK\n", cfg.lat_bufsize >> 10);
+    printf("\tBandwidth-bound transfer size:    %luM\n",
+           static_cast<unsigned long>(cfg.bw_bufsize >> 20));
+    printf("\tLatency-bound transfer size:      %luK\n",
+           static_cast<unsigned long>(cfg.lat_bufsize >> 10));
     printf("\tLatency accesses:                 %u\n", cfg.lat_accesses);
 }
 
-auto create_config(int argc, char** argv) -> int
+static void print_usage(const char* prog)
 {
-    // po::options_description desc("rocmbandwidth options");
-    // po::variables_map       vm;
+    printf("Usage: %s [options]\n"
+           "\n"
+           "Options:\n"
+           "  -h, --help              Print this help message and exit\n"
+           "  -s, --size SIZE         Transfer size for bandwidth measurements (default: %luM).\n"
+           "                          Plain numbers are MiB; K, M and G suffixes are accepted.\n"
+           "  -n, --iterations N      Number of timed iterations (default: %u)\n"
+           "  -t, --tests PATTERNS    Only run tests whose key contains one of the\n"
+           "                          comma-separated PATTERNS (e.g. -t sdma_bw,latency)\n"
+           "  -l, --list              List all test keys and exit\n",
+           prog,
+           static_cast<unsigned long>(conf.bw_bufsize >> 20),
+           conf.iterations);
+}
 
-    // desc.add_options()
-    //     /* --help / -h: conventional flag; no value, just a boolean presence. */
-    //     ("help,h", "Print this help message and exit")
+/* Parses "512", "512M", "64K", "2G" (plain numbers are MiB). Returns 0 on error. */
+static auto parse_size(const char* arg) -> uint64_t
+{
+    char*              end   = nullptr;
+    unsigned long long value = std::strtoull(arg, &end, 10);
+    if (end == arg || value == 0)
+    {
+        return 0;
+    }
 
-    //     /* --size / -s: bandwidth transfer size in MBs. */
-    //     ("size,s",
-    //      po::value<uint64_t>()->default_value(conf.bw_bufsize),
-    //      ("Transfer size for bandwidth measurements in MB (default: "
-    //       + std::to_string(conf.bw_bufsize >> 20) + ")")
-    //          .c_str())
+    uint64_t shift = 20;
+    if (*end != '\0')
+    {
+        switch (*end)
+        {
+            case 'k':
+            case 'K': shift = 10; break;
+            case 'm':
+            case 'M': shift = 20; break;
+            case 'g':
+            case 'G': shift = 30; break;
+            default: return 0;
+        }
+        if (end[1] != '\0')
+        {
+            return 0;
+        }
+    }
 
-    //     /* --iterations / -n: how many timed repetitions to run. */
-    //     ("iterations,n",
-    //      po::value<uint64_t>()->default_value(conf.iterations),
-    //      ("Number of timed iterations (default: " + std::to_string(conf.iterations) + ")").c_str());
+    if (value > (UINT64_MAX >> shift))
+    {
+        return 0;
+    }
+    return static_cast<uint64_t>(value) << shift;
+}
 
-    // try
-    // {
-    //     po::store(po::parse_command_line(argc, argv, desc), vm);
-    //     po::notify(vm);
-    // }
-    // catch (const po::error& e)
-    // {
-    //     fprintf(stderr, "Argument error: %s\n\n", e.what());
-    //     std::cerr << desc << "\n";
-    //     exit(EXIT_FAILURE);
-    // }
+static auto split_patterns(const std::string& arg) -> std::vector<std::string>
+{
+    std::vector<std::string> patterns;
+    std::stringstream        ss(arg);
+    std::string              item;
+    while (std::getline(ss, item, ','))
+    {
+        if (!item.empty())
+        {
+            patterns.push_back(item);
+        }
+    }
+    return patterns;
+}
 
-    // if (vm.count("help"))
-    // {
-    //     std::cout << desc << "\n";
-    //     exit(EXIT_SUCCESS);
-    // }
+struct cli_options
+{
+    std::vector<std::string> test_patterns;
+    bool                     list_tests = false;
+};
 
-    (void)argc;
-    (void)argv;
+auto create_config(int argc, char** argv, cli_options& opts) -> int
+{
+    static const struct option long_options[] = {
+        {      "help",       no_argument, nullptr, 'h'},
+        {      "size", required_argument, nullptr, 's'},
+        {"iterations", required_argument, nullptr, 'n'},
+        {     "tests", required_argument, nullptr, 't'},
+        {      "list",       no_argument, nullptr, 'l'},
+        {     nullptr,                 0, nullptr,   0},
+    };
+
+    int c;
+    while ((c = getopt_long(argc, argv, "hs:n:t:l", long_options, nullptr)) != -1)
+    {
+        switch (c)
+        {
+            case 'h': print_usage(argv[0]); exit(EXIT_SUCCESS);
+            case 's':
+                {
+                    uint64_t size = parse_size(optarg);
+                    /* Copies are done in 16-byte (float4) chunks and verified as uint64_t words */
+                    if (size == 0 || size % 16 != 0)
+                    {
+                        fprintf(stderr, "Argument error: invalid size '%s'\n\n", optarg);
+                        print_usage(argv[0]);
+                        exit(EXIT_FAILURE);
+                    }
+                    conf.bw_bufsize = size;
+                    break;
+                }
+            case 'n':
+                {
+                    char*         end = nullptr;
+                    unsigned long n   = std::strtoul(optarg, &end, 10);
+                    if (end == optarg || *end != '\0' || n == 0 || n > UINT32_MAX)
+                    {
+                        fprintf(stderr, "Argument error: invalid iteration count '%s'\n\n", optarg);
+                        print_usage(argv[0]);
+                        exit(EXIT_FAILURE);
+                    }
+                    conf.iterations = static_cast<uint32_t>(n);
+                    break;
+                }
+            case 't': opts.test_patterns = split_patterns(optarg); break;
+            case 'l': opts.list_tests = true; break;
+            default:
+                fprintf(stderr, "\n");
+                print_usage(argv[0]);
+                exit(EXIT_FAILURE);
+        }
+    }
+
+    if (optind < argc)
+    {
+        fprintf(stderr, "Argument error: unexpected argument '%s'\n\n", argv[optind]);
+        print_usage(argv[0]);
+        exit(EXIT_FAILURE);
+    }
 
     HIP_EXIT_ON_FAILURE(hipGetDeviceCount(&conf.device_count));
     if (conf.device_count <= 0)
@@ -84,6 +182,18 @@ auto create_config(int argc, char** argv) -> int
         exit(EXIT_FAILURE);
     }
     return 0;
+}
+
+static auto test_selected(const char* key, const std::vector<std::string>& patterns) -> bool
+{
+    if (patterns.empty())
+    {
+        return true;
+    }
+    return std::any_of(patterns.begin(),
+                       patterns.end(),
+                       [key](const std::string& p)
+                       { return std::string(key).find(p) != std::string::npos; });
 }
 
 void enable_p2p()
@@ -131,11 +241,9 @@ void enable_p2p()
 auto main(int argc, char** argv) -> int
 {
     std::vector<std::unique_ptr<Testcase>> testcases;
+    cli_options                            opts;
 
-    create_config(argc, argv);
-    print_config(conf);
-    print_device_info();
-    enable_p2p();
+    create_config(argc, argv, opts);
 
     testcases.push_back(std::make_unique<LatencyHostToDevice>(conf));
     // testcases.push_back(std::make_unique<LatencyDeviceToDevice>(conf));
@@ -182,6 +290,28 @@ auto main(int argc, char** argv) -> int
     testcases.push_back(std::make_unique<CUBandwidthDeviceRingUnidirRead>(conf));
     testcases.push_back(std::make_unique<CUBandwidthDeviceRingBidirWrite>(conf));
     testcases.push_back(std::make_unique<CUBandwidthDeviceRingBidirRead>(conf));
+
+    if (opts.list_tests)
+    {
+        for (auto& tc : testcases)
+        {
+            printf("%s\n", tc->getKey());
+        }
+        return EXIT_SUCCESS;
+    }
+
+    std::erase_if(testcases,
+                  [&opts](const std::unique_ptr<Testcase>& tc)
+                  { return !test_selected(tc->getKey(), opts.test_patterns); });
+    if (testcases.empty())
+    {
+        fprintf(stderr, "error: no tests match the given --tests patterns (see --list)\n");
+        return EXIT_FAILURE;
+    }
+
+    print_config(conf);
+    print_device_info();
+    enable_p2p();
 
     for (auto& tc : testcases)
     {
