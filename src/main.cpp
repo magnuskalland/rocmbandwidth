@@ -14,7 +14,7 @@ void print_device_info()
     {
         hipDeviceProp_t p;
         HIP_EXIT_ON_FAILURE(hipGetDeviceProperties(&p, i));
-        printf("\t%d: %04x:%02x:%02d.0 %-25s (%ldM memory, %d CUs)\n",
+        printf("\t%d: %04x:%02x:%02x.0 %-25s (%zuM memory, %d CUs)\n",
                i,
                p.pciDomainID,
                p.pciBusID,
@@ -29,9 +29,10 @@ void print_device_info()
 void print_config(const config& cfg)
 {
     printf("Configuration:\n");
-    printf("\tMeasurement iterations:           %-4d\n", cfg.iterations);
-    printf("\tBandwidth-bound transfer size:    %-4dM\n", cfg.bw_bufsize >> 20);
-    printf("\tLatency-bound transfer size:      %-4d\n", cfg.lat_accesses);
+    printf("\tMeasurement iterations:           %u\n", cfg.iterations);
+    printf("\tBandwidth-bound transfer size:    %uM\n", cfg.bw_bufsize >> 20);
+    printf("\tLatency-bound transfer size:      %uK\n", cfg.lat_bufsize >> 10);
+    printf("\tLatency accesses:                 %u\n", cfg.lat_accesses);
 }
 
 auto create_config(int argc, char** argv) -> int
