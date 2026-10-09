@@ -110,11 +110,17 @@ auto TransferExecutor::_memset(void* buf, uint64_t size, uint64_t pattern) -> vo
 
 auto LatencyExecutor::resetSourceBuffer(void* buf, uint64_t size) -> void
 {
-    const int        stride = 16; /* GPU cache line size in words */
-    const int        nptrs  = size / stride;
-    node*            nodes  = reinterpret_cast<node*>(buf);
-    std::vector<int> perm(nptrs);
-    for (int i = 0; i < nptrs; i++)
+    /* One node per 128-byte GPU cache line, so consecutive hops never hit the same line */
+    constexpr uint64_t cacheLineBytes = 128;
+    constexpr uint64_t stride         = cacheLineBytes / sizeof(node); /* in nodes */
+    const uint64_t     nptrs          = size / cacheLineBytes;
+    if (nptrs == 0)
+    {
+        return;
+    }
+
+    std::vector<uint64_t> perm(nptrs);
+    for (uint64_t i = 0; i < nptrs; i++)
     {
         perm[i] = i;
     }
@@ -122,11 +128,17 @@ auto LatencyExecutor::resetSourceBuffer(void* buf, uint64_t size) -> void
     std::mt19937 rng(12345);
     std::shuffle(perm.begin(), perm.end(), rng);
 
-    for (int i = 0; i < nptrs; i++)
+    /* Build the chain in host staging memory, pointing into the target buffer, and copy it
+     * over with HIP so this works for device memory as well as pinned host memory. */
+    std::vector<node> staging(nptrs * stride, node{nullptr});
+    node*             target = reinterpret_cast<node*>(buf);
+    for (uint64_t i = 0; i < nptrs; i++)
     {
-        int next_i          = perm[(i + 1) % nptrs];
-        nodes[perm[i]].next = &nodes[next_i];
+        uint64_t next                  = perm[(i + 1) % nptrs];
+        staging[perm[i] * stride].next = &target[next * stride];
     }
+
+    HIP_CHECK(hipMemcpy(buf, staging.data(), staging.size() * sizeof(node), hipMemcpyDefault));
 }
 
 auto LatencyExecutor::execute(
