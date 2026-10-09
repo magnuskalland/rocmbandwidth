@@ -147,18 +147,21 @@ auto launchCopyKernel(
     return realChunkCount * sizeof(float4);
 }
 
-static __global__ void ptrChaseKernel(const node* buf, uint32_t accesses, int agent)
+static __global__ void ptrChaseKernel(const node** position, uint32_t accesses, int agent)
 {
     if (blockIdx.x != agent)
     {
         return;
     }
 
-    volatile const node* n = buf;
+    /* Continue from where the previous launch stopped, so successive launches walk new parts
+     * of the chain instead of re-reading lines the previous launch just pulled into cache */
+    volatile const node* n = *position;
     for (uint32_t i = 0; i < accesses; i++)
     {
         n = n->next;
     }
+    *position = const_cast<const node*>(n);
 }
 
 auto launchPtrChaseKernel(const void* data,
@@ -166,12 +169,15 @@ auto launchPtrChaseKernel(const void* data,
                           uint32_t    accesses,
                           hipStream_t stream) -> uint64_t
 {
+    (void)size;
     hipEvent_t      start, end;
     int             dev;
     float           totalSecs = 0.0;
     int             numComputeUnits;
     hipDeviceProp_t p;
+    const node**    position;
 
+    DeviceGuard guard;
     HIP_CHECK(hipStreamGetDevice(stream, &dev));
     HIP_CHECK(hipGetDeviceProperties(&p, dev));
     numComputeUnits = p.multiProcessorCount;
@@ -179,27 +185,30 @@ auto launchPtrChaseKernel(const void* data,
     HIP_CHECK(hipSetDevice(dev));
     HIP_CHECK(hipEventCreate(&start));
     HIP_CHECK(hipEventCreate(&end));
+    HIP_CHECK(hipMalloc(reinterpret_cast<void**>(&position), sizeof(*position)));
+    const node* first = reinterpret_cast<const node*>(data);
+    HIP_CHECK(hipMemcpy(position, &first, sizeof(first), hipMemcpyHostToDevice));
 
+    const uint32_t perLaunch = accesses / numComputeUnits;
     for (int cu = 0; cu < numComputeUnits; cu++)
     {
         float ms;
-        float secs;
         HIP_CHECK(hipEventRecord(start, stream));
-        ptrChaseKernel<<<numComputeUnits, 1, 0, stream>>>(reinterpret_cast<const node*>(data),
-                                                          accesses / numComputeUnits,
-                                                          cu);
+        ptrChaseKernel<<<numComputeUnits, 1, 0, stream>>>(position, perLaunch, cu);
         HIP_CHECK(hipEventRecord(end, stream));
 
         HIP_CHECK(hipGetLastError());
         HIP_CHECK(hipStreamSynchronize(stream));
         HIP_CHECK(hipEventElapsedTime(&ms, start, end));
 
-        secs = ms / 1000.0;
-        totalSecs += secs;
+        totalSecs += ms / 1000.0;
     }
 
-    uint64_t nanoSecondsPerAccess = (totalSecs * 1.0E9) / accesses;
+    /* Divide by the accesses actually performed (accesses may not divide evenly) */
+    uint64_t performed            = static_cast<uint64_t>(perLaunch) * numComputeUnits;
+    uint64_t nanoSecondsPerAccess = performed ? (totalSecs * 1.0E9) / performed : 0;
 
+    HIP_CHECK(hipFree(position));
     HIP_CHECK(hipEventDestroy(start));
     HIP_CHECK(hipEventDestroy(end));
 
