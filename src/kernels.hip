@@ -79,6 +79,8 @@ static __global__ void copyKernel(const float4* src,
                                   float4*       dst,
                                   uint64_t      perThreadChunkCount,
                                   uint64_t      stride,
+                                  uint64_t      tailStart,
+                                  uint64_t      tailCount,
                                   uint64_t      iterations)
 {
     uint64_t      offset    = blockDim.x * blockIdx.x + threadIdx.x;
@@ -118,6 +120,12 @@ static __global__ void copyKernel(const float4* src,
             storeAddress  = storeAddress + stride;
             loadAddress   = loadAddress + stride;
         }
+
+        /* Chunks left over when the buffer doesn't divide evenly between all threads */
+        if (offset < tailCount)
+        {
+            dst[tailStart + offset] = src[tailStart + offset];
+        }
     }
 }
 
@@ -150,9 +158,11 @@ auto launchCopyKernel(
                                                           reinterpret_cast<float4*>(dst),
                                                           perThreadChunkCount,
                                                           totalThreads,
+                                                          realChunkCount,
+                                                          totalChunkCount - realChunkCount,
                                                           iterations);
 
-    return realChunkCount * sizeof(float4);
+    return totalChunkCount * sizeof(float4);
 }
 
 static __global__ void ptrChaseKernel(const node** position, uint32_t accesses, int agent)
