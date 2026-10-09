@@ -206,6 +206,7 @@ auto TransferEngine::sequentialBidirectional(const std::vector<const Buffer*>& b
     ok = _verify(destinationBuffers, bytesCopied);
     if (!ok)
     {
+        _cleanupTransfers(streams, startEvents, endEvents);
         return 0.0;
     }
 
@@ -312,6 +313,10 @@ auto TransferEngine::concurrentBidirectional(
         ok = _verify(destinationBufferPairs.at(i), bytesCopied);
         if (!ok)
         {
+            for (int j = 0; j < pairSize; j++)
+            {
+                _cleanupTransfers(streamPairs.at(j), startEventPairs.at(j), endEventPairs.at(j));
+            }
             return;
         }
     }
