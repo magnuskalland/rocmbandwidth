@@ -163,7 +163,8 @@ each therefore shows up twice in the output under a distinct key prefix:
 
 The latency test (`latency_host_to_device`) uses a third executor that
 times a pointer-chase through a randomly-shuffled linked list built inside
-the buffer, reporting nanoseconds per access.
+the buffer, reporting nanoseconds per access. A line `X -> GPU Y` means GPU Y
+chases pointers through memory located on X (the host or another GPU).
 
 ### Test catalog
 
@@ -181,6 +182,7 @@ time until the last transfer finished (not the sum of the per-link numbers).
 | Category | Pattern | Mode | Keys run (`sdma_bw_…` / `cu_bw_…`) |
 |---|---|---|---|
 | Latency | Host ↔ one GPU, per GPU | Sequential | `latency_host_to_device` *(latency executor only; no sdma/cu split)* |
+| Latency | Every ordered GPU pair | Sequential | `latency_device_to_device` *(latency executor only)* |
 | Host↔Device | Host ↔ one GPU, per GPU, one direction | Sequential, unidir | `host_to_device_unidir` |
 | Host↔Device | Host ↔ one GPU, per GPU, both directions at once | Sequential, bidir | `host_to_device_bidir` |
 | Device↔Host | One GPU ↔ Host, per GPU, one direction | Sequential, unidir | `device_to_host_unidir` |
@@ -247,13 +249,8 @@ interpreting `device_to_device_*` / `device_ring_*` results.
 
 ## Known limitations
 
-- **`latency_device_to_device` is implemented but not run.** The
-  `LatencyDeviceToDevice` test class exists in `src/Testcase.hpp`/`.cpp` and
-  works the same way as the host↔device latency test, but its
-  `push_back` in `main.cpp` is commented out, so only host↔device latency
-  is currently exercised by default.
 - **`*_all_to_device_write` / `*_all_to_device_read` are not implemented.**
-  Unlike the item above, these have no backing classes at all — `main.cpp`
+  These have no backing classes at all — `main.cpp`
   only has a `/* TODO: implement */` comment where they'd go.
 - **`sdma_bw_device_to_device_bidir_read` is flagged by the author.** Its
   `push_back` in `main.cpp` carries a `/* TODO: remove */` comment, so

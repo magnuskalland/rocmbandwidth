@@ -263,7 +263,7 @@ auto main(int argc, char** argv) -> int
     create_config(argc, argv, opts);
 
     testcases.push_back(std::make_unique<LatencyHostToDevice>(conf));
-    // testcases.push_back(std::make_unique<LatencyDeviceToDevice>(conf));
+    testcases.push_back(std::make_unique<LatencyDeviceToDevice>(conf));
 
     testcases.push_back(std::make_unique<SDMABandwidthHostToDeviceUnidir>(conf));
     testcases.push_back(std::make_unique<SDMABandwidthHostToDeviceBidir>(conf));
