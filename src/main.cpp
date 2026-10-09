@@ -73,7 +73,15 @@ auto create_config(int argc, char** argv) -> int
     //     exit(EXIT_SUCCESS);
     // }
 
-    // HIP_EXIT_ON_FAILURE(hipGetDeviceCount(&conf.device_count));
+    (void)argc;
+    (void)argv;
+
+    HIP_EXIT_ON_FAILURE(hipGetDeviceCount(&conf.device_count));
+    if (conf.device_count <= 0)
+    {
+        fprintf(stderr, "error: no HIP devices found\n");
+        exit(EXIT_FAILURE);
+    }
     return 0;
 }
 
