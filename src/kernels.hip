@@ -43,6 +43,10 @@ static __global__ void memsetKernel(uint64_t* buf, uint64_t pattern, uint64_t co
 
 void launchMemsetKernel(uint64_t* buf, uint64_t pattern, uint64_t count)
 {
+    if (count == 0)
+    {
+        return; /* A zero-block launch is an invalid configuration */
+    }
     const int blockSize = 256;
     const int blocks    = (count + blockSize - 1) / blockSize;
     memsetKernel<<<blocks, blockSize>>>(buf, pattern, count);
@@ -59,6 +63,10 @@ static __global__ void verifyKernel(const uint64_t* buf, uint64_t pattern, uint6
 
 void launchVerifyKernel(const uint64_t* buf, uint64_t pattern, uint64_t count, bool* ok)
 {
+    if (count == 0)
+    {
+        return; /* A zero-block launch is an invalid configuration */
+    }
     const int blockSize = 256;
     const int blocks    = (count + blockSize - 1) / blockSize;
     verifyKernel<<<blocks, blockSize>>>(buf, pattern, count, ok);
