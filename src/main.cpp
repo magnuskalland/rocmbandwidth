@@ -50,12 +50,15 @@ static void print_usage(const char* prog)
            "  -h, --help              Print this help message and exit\n"
            "  -s, --size SIZE         Transfer size for bandwidth measurements (default: %luM).\n"
            "                          Plain numbers are MiB; K, M and G suffixes are accepted.\n"
+           "  -L, --latency-size SIZE Buffer size for latency measurements (default: %luK).\n"
+           "                          Same units as --size; at least 128 bytes.\n"
            "  -n, --iterations N      Number of timed iterations (default: %u)\n"
            "  -t, --tests PATTERNS    Only run tests whose key contains one of the\n"
            "                          comma-separated PATTERNS (e.g. -t sdma_bw,latency)\n"
            "  -l, --list              List all test keys and exit\n",
            prog,
            static_cast<unsigned long>(conf.bw_bufsize >> 20),
+           static_cast<unsigned long>(conf.lat_bufsize >> 10),
            conf.iterations);
 }
 
@@ -119,16 +122,17 @@ struct cli_options
 auto create_config(int argc, char** argv, cli_options& opts) -> int
 {
     static const struct option long_options[] = {
-        {      "help",       no_argument, nullptr, 'h'},
-        {      "size", required_argument, nullptr, 's'},
-        {"iterations", required_argument, nullptr, 'n'},
-        {     "tests", required_argument, nullptr, 't'},
-        {      "list",       no_argument, nullptr, 'l'},
-        {     nullptr,                 0, nullptr,   0},
+        {        "help",       no_argument, nullptr, 'h'},
+        {        "size", required_argument, nullptr, 's'},
+        {"latency-size", required_argument, nullptr, 'L'},
+        {  "iterations", required_argument, nullptr, 'n'},
+        {       "tests", required_argument, nullptr, 't'},
+        {        "list",       no_argument, nullptr, 'l'},
+        {       nullptr,                 0, nullptr,   0},
     };
 
     int c;
-    while ((c = getopt_long(argc, argv, "hs:n:t:l", long_options, nullptr)) != -1)
+    while ((c = getopt_long(argc, argv, "hs:L:n:t:l", long_options, nullptr)) != -1)
     {
         switch (c)
         {
@@ -144,6 +148,19 @@ auto create_config(int argc, char** argv, cli_options& opts) -> int
                         exit(EXIT_FAILURE);
                     }
                     conf.bw_bufsize = size;
+                    break;
+                }
+            case 'L':
+                {
+                    uint64_t size = parse_size(optarg);
+                    /* The pointer chase places one node per 128-byte cache line */
+                    if (size < 128)
+                    {
+                        fprintf(stderr, "Argument error: invalid latency size '%s'\n\n", optarg);
+                        print_usage(argv[0]);
+                        exit(EXIT_FAILURE);
+                    }
+                    conf.lat_bufsize = size;
                     break;
                 }
             case 'n':

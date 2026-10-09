@@ -121,6 +121,7 @@ HIP_VISIBLE_DEVICES=0,1 ./build/rocmbandwidth
 |---|---|---|
 | `-h`, `--help` | | Print usage and exit. |
 | `-s`, `--size SIZE` | `512M` | Buffer size used for every bandwidth test. Plain numbers are MiB; `K`, `M` and `G` suffixes are accepted (e.g. `-s 64`, `-s 2G`). Must be a multiple of 16 bytes. |
+| `-L`, `--latency-size SIZE` | `2M` | Buffer size used for the latency (pointer-chase) tests, same units as `--size`. Use a size larger than the GPU's L2 cache to measure uncached latency. |
 | `-n`, `--iterations N` | `16` | Timed copy repetitions per bandwidth measurement (plus 4 untimed warm-up copies issued beforehand on the same stream). |
 | `-t`, `--tests PATTERNS` | all | Only run tests whose key contains one of the comma-separated substrings, e.g. `-t sdma_bw_host,latency`. |
 | `-l`, `--list` | | Print every test key and exit. |
@@ -133,12 +134,11 @@ Examples:
 ./build/rocmbandwidth -t device_to_device,ring    # only the GPU<->GPU tests
 ```
 
-The latency test parameters aren't exposed as flags; change them in the
-`config` struct in `src/common.h` if needed:
+The number of pointer dereferences per latency measurement isn't exposed as a
+flag; change it in the `config` struct in `src/common.h` if needed:
 
 | Field | Default | Meaning |
 |---|---|---|
-| `lat_bufsize` | `2 << 20` (2 MiB) | Buffer size used for the latency (pointer-chase) test. |
 | `lat_accesses` | `1,000,000` | Number of chained pointer dereferences performed per latency measurement. |
 
 ## What gets measured
