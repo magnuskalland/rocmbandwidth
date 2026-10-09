@@ -2,7 +2,7 @@
 
 `rocmbandwidth` is a ROCm-native benchmarking tool for measuring memory-copy
 bandwidth and latency between the host and one or more AMD GPUs, and between
-GPUs themselves. It runs a fixed suite of ~39 micro-benchmarks that cover
+GPUs themselves. It runs a fixed suite of ~40 micro-benchmarks that cover
 host↔device, device↔device, and multi-GPU "all links at once" transfer
 patterns, using both the ROCm runtime's own copy path (`hipMemcpyAsync`,
 generally backed by the GPU's DMA/SDMA copy engines) and a hand-written HIP
@@ -26,6 +26,7 @@ kernel that drives the copy from the GPU's compute units directly.
     - [Test catalog](#test-catalog)
   - [Reading the output](#reading-the-output)
   - [Peer-to-peer (P2P) access](#peer-to-peer-p2p-access)
+  - [Environment variables](#environment-variables)
   - [Known limitations](#known-limitations)
   - [Development notes](#development-notes)
 
@@ -34,7 +35,7 @@ kernel that drives the copy from the GPU's compute units directly.
 | Requirement | Notes |
 |---|---|
 | Linux | ROCm's supported platform; the build enforces nothing OS-specific beyond what ROCm itself requires. |
-| [ROCm](https://rocm.docs.amd.com/) with HIP | Provides the HIP compiler/runtime and headers. Built and last compiled against ROCm 7.2.2, per the checked-in `compile_commands.json`; any reasonably recent ROCm release with HIP + `hip-config.cmake` should work. |
+| [ROCm](https://rocm.docs.amd.com/) with HIP | Provides the HIP compiler/runtime and headers. Tested with ROCm 7.2 (2× MI210, gfx90a). The code also compiles against ROCm 5.7; any reasonably recent ROCm release with HIP + `hip-config.cmake` should work. |
 | CMake ≥ 3.21 | Required for CMake's first-class `LANGUAGES ... HIP` support (`enable_language(HIP)` without a separate `FindHIP` module). |
 | A C++20-capable host compiler | Used for the `.cpp` translation units (`g++`/`clang++`); picked up via the usual `CXX`/`CMAKE_CXX_COMPILER` mechanisms. |
 | ROCm's HIP compiler (`hipcc`/`amdclang++`) | Used for the `.hip` device/kernel translation unit; located automatically by CMake once it finds your ROCm install. |
@@ -104,7 +105,9 @@ On startup the tool:
    `hipGetDeviceProperties`).
 3. Attempts to enable peer-to-peer access between every ordered pair of
    GPUs, printing a line for any pair that doesn't support it.
-4. Runs the built-in suite of ~39 test cases (or the subset selected with
+4. Does one small warm-up copy per GPU (see
+   [Known limitations](#known-limitations)).
+5. Runs the built-in suite of ~40 test cases (or the subset selected with
    `--tests`) in a fixed order, printing each test's key followed by its
    result(s) as it completes.
 
@@ -205,7 +208,13 @@ in nanoseconds. Every destination buffer is verified against the expected
 pattern after each transfer; if verification fails you'll see
 `error: destination buffer corrupt` on stderr and a `0.0` result for that
 test instead of a bogus number — treat that as a correctness bug to
-investigate, not just "slow."
+investigate, not just "slow." Likewise, `error: streams were released by the
+spin-kernel timeout; result invalid` means the transfers didn't start
+together (typically because queuing them blocked on the host), and the
+result is reported as `0` rather than a misleading number.
+
+In `device_to_all_*` tests, the hub GPU's own slot is a copy to host memory,
+so each hub GPU shows one `GPU n -> CPU` line plus one line per peer GPU.
 
 Illustrative shape of the output on a 2-GPU system (numbers are made up —
 run the tool on your own hardware for real ones):
@@ -214,7 +223,8 @@ run the tool on your own hardware for real ones):
 Configuration:
         Measurement iterations:           16
         Bandwidth-bound transfer size:    512M
-        Latency-bound transfer size:      1000000
+        Latency-bound transfer size:      2048K
+        Latency accesses:                 1000000
 Using devices:
         0: 0000:0c:00.0 AMD Instinct MI210          (65536M memory, 104 CUs)
         1: 0000:22:00.0 AMD Instinct MI210          (65536M memory, 104 CUs)
@@ -231,9 +241,9 @@ Running sdma_bw_host_to_device_unidir
         CPU -> GPU 1: 24.28 GB/s
 
 Running cu_bw_device_to_all_write
-        GPU 0 -> GPU 0: 0.00 GB/s
-        GPU 0 -> GPU 1: 41.72 GB/s
-        Aggregate: 41.72 GB/s
+        GPU 0 -> CPU  : 4.63 GB/s
+        GPU 0 -> GPU 1: 4.63 GB/s
+        Aggregate: 9.26 GB/s
 ...
 ```
 
@@ -247,7 +257,36 @@ will then be routed through host memory by the ROCm runtime, which can
 substantially lower the reported bandwidth. Check the startup log when
 interpreting `device_to_device_*` / `device_ring_*` results.
 
+## Environment variables
+
+| Variable | Effect |
+|---|---|
+| `HIP_VISIBLE_DEVICES` | Standard HIP variable; restricts which GPUs are used. |
+| `ROCMBW_CU_THREADS`, `ROCMBW_CU_BLOCKS_PER_CU`, `ROCMBW_CU_PIPELINES` | Override the CU copy kernel's launch shape on every path (see [What gets measured](#what-gets-measured)). |
+| `ROCMBW_NO_SDMA_WARMUP=1` | Skip the startup SDMA warm-up copy (see below). |
+
 ## Known limitations
+
+- **SDMA host↔device bidirectional results depend on ROCm's copy-engine
+  assignment.** On 2× MI210 / ROCm 7.2, the two directions of
+  `sdma_bw_*host*_bidir` either ran concurrently (~50 GB/s per GPU) or were
+  serialised onto one engine (~28 GB/s), depending on which copies the
+  process had done earlier. At startup the tool does one 4 MiB pageable
+  host → device `hipMemcpy` per GPU, which made the concurrent case the
+  consistent one there. This is an empirical workaround for runtime
+  behaviour and may not carry over to other ROCm versions; set
+  `ROCMBW_NO_SDMA_WARMUP=1` to compare.
+- **Run-to-run variation on one GPU's host path.** On the same system, GPU 1
+  (PCI bus 83, likely on the second CPU socket) sometimes reached only
+  ~23–25 GB/s in `sdma_bw_all_to_host_bidir` (GPU 0: ~50) and lower numbers
+  in `cu_bw_all_to_host_bidir`, in about half of full runs. The same drop
+  shows on the CU path, which doesn't use the copy engines, so it is
+  probably a property of that GPU's path to host memory (NUMA / inter-socket
+  traffic) rather than of the tool. Repeat runs before drawing conclusions
+  from host↔device results.
+- **`device_to_host_bidir` and `host_to_device_bidir` measure the same
+  thing** (one host→device and one device→host transfer at once); they
+  differ only in which buffer is called the source.
 
 - **`*_all_to_device_write` / `*_all_to_device_read` are not implemented.**
   These have no backing classes at all — `main.cpp`
@@ -260,14 +299,10 @@ interpreting `device_to_device_*` / `device_ring_*` results.
   a future dedicated output/formatting module; today all result formatting
   happens ad hoc via `std::stringstream` in `Testcase.cpp`.
 - **No `LICENSE` file** is currently included in this repository.
-- **The checked-in `compile_commands.json`** is a stale snapshot from the
-  author's own machine (paths under `/home/magnus/...`, and GPU targets
-  that don't match the current `GPU_TARGETS` default), not something
-  generated fresh by this tree. If you want one for editor tooling
-  (clangd, etc.), generate your own — the top-level `CMakeLists.txt` does
-  not currently set `CMAKE_EXPORT_COMPILE_COMMANDS`, so pass it explicitly:
-  `cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON` and point your
-  tooling at `build/compile_commands.json`.
+- **`compile_commands.json`** isn't generated by default (and is
+  git-ignored). For editor tooling (clangd, etc.) pass
+  `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON` to CMake and point your tooling at
+  `build/compile_commands.json`.
 
 ## Development notes
 
