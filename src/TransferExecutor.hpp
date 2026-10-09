@@ -1,3 +1,4 @@
+#pragma once
 
 #include <cstdint>
 
@@ -10,12 +11,15 @@
 class TransferExecutor
 {
 public:
+    TransferExecutor(const TransferExecutor&)                    = delete;
+    auto operator=(const TransferExecutor&) -> TransferExecutor& = delete;
+
     explicit TransferExecutor(uint64_t pattern) : _sourcePattern(pattern)
     {
         HIP_CHECK(hipHostMalloc((void**)&_latch, sizeof(int), hipHostMallocDefault));
     }
 
-    ~TransferExecutor()
+    virtual ~TransferExecutor()
     {
         HIP_CHECK(hipHostFree((void*)_latch));
     }
