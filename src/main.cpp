@@ -109,13 +109,18 @@ void enable_p2p()
             }
 
             hipError_t err = hipDeviceEnablePeerAccess(peer, 0);
-            // hipError_t err = hipDeviceDisablePeerAccess(peer);
+            if (err == hipErrorPeerAccessAlreadyEnabled)
+            {
+                /* Clear the sticky error so later hipGetLastError() checks don't trip on it */
+                (void)hipGetLastError();
+            }
             if (err != hipSuccess && err != hipErrorPeerAccessAlreadyEnabled)
             {
                 printf("Failed to enable P2P from device %d to %d: %s\n",
                        dev,
                        peer,
                        hipGetErrorString(err));
+                continue;
             }
             printf("Enabled P2P from GPU %d to GPU %d\n", dev, peer);
         }
