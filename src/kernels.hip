@@ -131,22 +131,33 @@ static __global__ void copyKernel(const float4* src,
     }
 }
 
-/* Launch shape of the CU copy kernel. The defaults reproduce the original launch (one 8-thread
- * block per CU, no load/store pipelining); they can be overridden for tuning experiments with
- * ROCMBW_CU_THREADS, ROCMBW_CU_BLOCKS_PER_CU and ROCMBW_CU_PIPELINES (1, 2, 4 or 8). */
+/* Launch shape of the CU copy kernel. Measured on 2x MI210 (n016), one block per CU with no
+ * load/store pipelining was best everywhere, but the best block size depends on the path:
+ *   - both buffers in the executing GPU's own memory: 1024 threads (local copy ~615 GB/s,
+ *     vs ~223 GB/s with 64 threads)
+ *   - either buffer across PCIe (host or peer GPU): 64 threads (device->host ~9 GB/s and
+ *     peer read ~18 GB/s, vs ~2-3 and ~13 GB/s with 1024 threads)
+ * ROCMBW_CU_THREADS, ROCMBW_CU_BLOCKS_PER_CU and ROCMBW_CU_PIPELINES (1, 2, 4 or 8) override
+ * the corresponding value for every path, for tuning on other hardware. */
 struct CopyLaunchShape
 {
-    int threadsPerBlock = 8;
-    int blocksPerCU     = 1;
-    int pipelines       = 1;
+    int threadsPerBlock;
+    int blocksPerCU;
+    int pipelines;
 };
 
-static auto envInt(const char* name, int fallback, int min, int max) -> int
+struct CopyLaunchShapes
+{
+    CopyLaunchShape local  = {1024, 1, 1};
+    CopyLaunchShape remote = {64, 1, 1};
+};
+
+static auto envInt(const char* name, int min, int max) -> int
 {
     const char* value = std::getenv(name);
     if (value == nullptr || *value == '\0')
     {
-        return fallback;
+        return 0;
     }
     char* end = nullptr;
     long  v   = std::strtol(value, &end, 10);
@@ -158,43 +169,66 @@ static auto envInt(const char* name, int fallback, int min, int max) -> int
     return static_cast<int>(v);
 }
 
-static auto copyLaunchShape() -> const CopyLaunchShape&
+static auto copyLaunchShapes() -> const CopyLaunchShapes&
 {
-    static const CopyLaunchShape shape = [] {
-        CopyLaunchShape s;
-        s.threadsPerBlock = envInt("ROCMBW_CU_THREADS", s.threadsPerBlock, 1, 1024);
-        s.blocksPerCU     = envInt("ROCMBW_CU_BLOCKS_PER_CU", s.blocksPerCU, 1, 64);
-        s.pipelines       = envInt("ROCMBW_CU_PIPELINES", s.pipelines, 1, 8);
-        if ((s.pipelines & (s.pipelines - 1)) != 0)
+    static const CopyLaunchShapes shapes = []
+    {
+        CopyLaunchShapes s;
+        int threads = envInt("ROCMBW_CU_THREADS", 1, 1024);
+        int blocks  = envInt("ROCMBW_CU_BLOCKS_PER_CU", 1, 64);
+        int pipes   = envInt("ROCMBW_CU_PIPELINES", 1, 8);
+        if (pipes != 0 && (pipes & (pipes - 1)) != 0)
         {
             fprintf(stderr, "error: ROCMBW_CU_PIPELINES must be 1, 2, 4 or 8\n");
             exit(EXIT_FAILURE);
         }
-        if (s.threadsPerBlock != 8 || s.blocksPerCU != 1 || s.pipelines != 1)
+        for (CopyLaunchShape* shape : {&s.local, &s.remote})
+        {
+            shape->threadsPerBlock = threads != 0 ? threads : shape->threadsPerBlock;
+            shape->blocksPerCU     = blocks != 0 ? blocks : shape->blocksPerCU;
+            shape->pipelines       = pipes != 0 ? pipes : shape->pipelines;
+        }
+        if (threads != 0 || blocks != 0 || pipes != 0)
         {
             fprintf(stderr,
-                    "note: CU copy kernel launch overridden: %d threads/block, %d blocks/CU, "
-                    "%d pipelines\n",
-                    s.threadsPerBlock,
-                    s.blocksPerCU,
-                    s.pipelines);
+                    "note: CU copy kernel launch overridden: local %d threads/block, %d blocks/CU, "
+                    "%d pipelines; remote %d threads/block, %d blocks/CU, %d pipelines\n",
+                    s.local.threadsPerBlock,
+                    s.local.blocksPerCU,
+                    s.local.pipelines,
+                    s.remote.threadsPerBlock,
+                    s.remote.blocksPerCU,
+                    s.remote.pipelines);
         }
         return s;
     }();
-    return shape;
+    return shapes;
+}
+
+static auto isLocalDeviceMemory(const void* ptr, int dev) -> bool
+{
+    hipPointerAttribute_t attrs;
+    if (hipPointerGetAttributes(&attrs, ptr) != hipSuccess)
+    {
+        (void)hipGetLastError();
+        return false;
+    }
+    return attrs.type == hipMemoryTypeDevice && attrs.device == dev;
 }
 
 auto launchCopyKernel(
     const void* src, void* dst, size_t size, uint64_t iterations, hipStream_t stream) -> uint64_t
 {
-    hipDeviceProp_t        p;
-    int                    dev;
-    const CopyLaunchShape& shape = copyLaunchShape();
+    hipDeviceProp_t p;
+    int             dev;
 
     DeviceGuard guard;
     HIP_CHECK(hipStreamGetDevice(stream, &dev));
     HIP_CHECK(hipGetDeviceProperties(&p, dev));
     HIP_CHECK(hipSetDevice(dev));
+
+    const bool             local = isLocalDeviceMemory(src, dev) && isLocalDeviceMemory(dst, dev);
+    const CopyLaunchShape& shape = local ? copyLaunchShapes().local : copyLaunchShapes().remote;
 
     const int      blocks              = p.multiProcessorCount * shape.blocksPerCU;
     const uint64_t totalThreads        = static_cast<uint64_t>(blocks) * shape.threadsPerBlock;

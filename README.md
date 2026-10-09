@@ -150,9 +150,15 @@ each therefore shows up twice in the output under a distinct key prefix:
   runtime's own copy path, generally backed by the GPU's dedicated DMA/SDMA
   copy engines (or a host `memcpy` for host-only transfers).
 - **`cu_bw_*`** — the **C**ompute **U**nit engine. A custom HIP kernel
-  (one thread-block per compute unit, vectorized `float4` pipelined
-  loads/stores) performs the copy directly on the GPU's shader/compute
-  units, bypassing the DMA engines.
+  (one thread-block per compute unit, vectorized `float4` loads/stores)
+  performs the copy directly on the GPU's shader/compute units, bypassing
+  the DMA engines. The block size depends on the path: 1024 threads when
+  both buffers are in the executing GPU's own memory, 64 threads when either
+  side is across PCIe (host memory or a peer GPU). Those were the best
+  settings measured on 2× MI210. To tune for other hardware, override them
+  with the environment variables `ROCMBW_CU_THREADS`,
+  `ROCMBW_CU_BLOCKS_PER_CU` and `ROCMBW_CU_PIPELINES` (1, 2, 4 or 8), which
+  apply to every path.
 
 The latency test (`latency_host_to_device`) uses a third executor that
 times a pointer-chase through a randomly-shuffled linked list built inside
