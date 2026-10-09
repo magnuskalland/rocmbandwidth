@@ -1,5 +1,7 @@
 #include "common.h"
 #include "kernels.hpp"
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <hip/hip_runtime.h>
 
@@ -129,38 +131,99 @@ static __global__ void copyKernel(const float4* src,
     }
 }
 
+/* Launch shape of the CU copy kernel. The defaults reproduce the original launch (one 8-thread
+ * block per CU, no load/store pipelining); they can be overridden for tuning experiments with
+ * ROCMBW_CU_THREADS, ROCMBW_CU_BLOCKS_PER_CU and ROCMBW_CU_PIPELINES (1, 2, 4 or 8). */
+struct CopyLaunchShape
+{
+    int threadsPerBlock = 8;
+    int blocksPerCU     = 1;
+    int pipelines       = 1;
+};
+
+static auto envInt(const char* name, int fallback, int min, int max) -> int
+{
+    const char* value = std::getenv(name);
+    if (value == nullptr || *value == '\0')
+    {
+        return fallback;
+    }
+    char* end = nullptr;
+    long  v   = std::strtol(value, &end, 10);
+    if (*end != '\0' || v < min || v > max)
+    {
+        fprintf(stderr, "error: %s=%s is not in [%d, %d]\n", name, value, min, max);
+        exit(EXIT_FAILURE);
+    }
+    return static_cast<int>(v);
+}
+
+static auto copyLaunchShape() -> const CopyLaunchShape&
+{
+    static const CopyLaunchShape shape = [] {
+        CopyLaunchShape s;
+        s.threadsPerBlock = envInt("ROCMBW_CU_THREADS", s.threadsPerBlock, 1, 1024);
+        s.blocksPerCU     = envInt("ROCMBW_CU_BLOCKS_PER_CU", s.blocksPerCU, 1, 64);
+        s.pipelines       = envInt("ROCMBW_CU_PIPELINES", s.pipelines, 1, 8);
+        if ((s.pipelines & (s.pipelines - 1)) != 0)
+        {
+            fprintf(stderr, "error: ROCMBW_CU_PIPELINES must be 1, 2, 4 or 8\n");
+            exit(EXIT_FAILURE);
+        }
+        if (s.threadsPerBlock != 8 || s.blocksPerCU != 1 || s.pipelines != 1)
+        {
+            fprintf(stderr,
+                    "note: CU copy kernel launch overridden: %d threads/block, %d blocks/CU, "
+                    "%d pipelines\n",
+                    s.threadsPerBlock,
+                    s.blocksPerCU,
+                    s.pipelines);
+        }
+        return s;
+    }();
+    return shape;
+}
+
 auto launchCopyKernel(
     const void* src, void* dst, size_t size, uint64_t iterations, hipStream_t stream) -> uint64_t
 {
-    hipDeviceProp_t p;
-    int             dev;
-    int             numComputeUnits;
-    int             threadsPerBlock;
-    int             totalThreads;
-    uint64_t        totalChunkCount;
-    uint64_t        realChunkCount;
-    uint64_t        perThreadChunkCount;
+    hipDeviceProp_t        p;
+    int                    dev;
+    const CopyLaunchShape& shape = copyLaunchShape();
 
     DeviceGuard guard;
     HIP_CHECK(hipStreamGetDevice(stream, &dev));
     HIP_CHECK(hipGetDeviceProperties(&p, dev));
     HIP_CHECK(hipSetDevice(dev));
 
-    numComputeUnits     = p.multiProcessorCount;
-    threadsPerBlock     = 8;
-    totalThreads        = numComputeUnits * threadsPerBlock;
-    totalChunkCount     = size / sizeof(float4);
-    realChunkCount      = totalThreads * (totalChunkCount / totalThreads);
-    perThreadChunkCount = realChunkCount / totalThreads;
+    const int      blocks              = p.multiProcessorCount * shape.blocksPerCU;
+    const uint64_t totalThreads        = static_cast<uint64_t>(blocks) * shape.threadsPerBlock;
+    const uint64_t totalChunkCount     = size / sizeof(float4);
+    const uint64_t realChunkCount      = totalThreads * (totalChunkCount / totalThreads);
+    const uint64_t perThreadChunkCount = realChunkCount / totalThreads;
 
-    copyKernel<1>
-        <<<numComputeUnits, threadsPerBlock, 0, stream>>>(reinterpret_cast<const float4*>(src),
-                                                          reinterpret_cast<float4*>(dst),
-                                                          perThreadChunkCount,
-                                                          totalThreads,
-                                                          realChunkCount,
-                                                          totalChunkCount - realChunkCount,
-                                                          iterations);
+    auto s = reinterpret_cast<const float4*>(src);
+    auto d = reinterpret_cast<float4*>(dst);
+    auto t = totalChunkCount - realChunkCount;
+    switch (shape.pipelines)
+    {
+        case 1:
+            copyKernel<1><<<blocks, shape.threadsPerBlock, 0, stream>>>(
+                s, d, perThreadChunkCount, totalThreads, realChunkCount, t, iterations);
+            break;
+        case 2:
+            copyKernel<2><<<blocks, shape.threadsPerBlock, 0, stream>>>(
+                s, d, perThreadChunkCount, totalThreads, realChunkCount, t, iterations);
+            break;
+        case 4:
+            copyKernel<4><<<blocks, shape.threadsPerBlock, 0, stream>>>(
+                s, d, perThreadChunkCount, totalThreads, realChunkCount, t, iterations);
+            break;
+        default:
+            copyKernel<8><<<blocks, shape.threadsPerBlock, 0, stream>>>(
+                s, d, perThreadChunkCount, totalThreads, realChunkCount, t, iterations);
+            break;
+    }
 
     return totalChunkCount * sizeof(float4);
 }
