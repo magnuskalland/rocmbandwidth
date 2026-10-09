@@ -48,11 +48,35 @@ auto TransferEngine::_enqueueTransfers(const std::vector<const Buffer*>& sources
                            streams[i]);
     }
 
-    HIP_RETURN_VOID_ON_FAILURE(hipEventRecord(startEvents[0], streams[0]));
-    for (size_t i = 1; i < nBuffers; i++)
+    /* Barrier: no stream starts its timed copies until every stream has finished its warmup.
+     * Otherwise a stream whose warmup is queued behind another stream's timed copies (e.g. on
+     * a shared SDMA engine) starts its clock late, and transfers that actually ran one after
+     * the other are each timed as if they had the link to themselves. */
+    std::vector<hipEvent_t> warmupDone(nBuffers);
+    for (size_t i = 0; i < nBuffers; i++)
     {
-        HIP_RETURN_VOID_ON_FAILURE(hipStreamWaitEvent(streams[i], startEvents[0], 0));
+        DeviceGuard guard;
+        int         dev;
+        HIP_RETURN_VOID_ON_FAILURE(hipStreamGetDevice(streams[i], &dev));
+        HIP_RETURN_VOID_ON_FAILURE(hipSetDevice(dev));
+        HIP_RETURN_VOID_ON_FAILURE(hipEventCreateWithFlags(&warmupDone[i], hipEventDisableTiming));
+        HIP_RETURN_VOID_ON_FAILURE(hipEventRecord(warmupDone[i], streams[i]));
+    }
+    for (size_t i = 0; i < nBuffers; i++)
+    {
+        for (size_t j = 0; j < nBuffers; j++)
+        {
+            if (i != j)
+            {
+                HIP_RETURN_VOID_ON_FAILURE(hipStreamWaitEvent(streams[i], warmupDone[j], 0));
+            }
+        }
         HIP_RETURN_VOID_ON_FAILURE(hipEventRecord(startEvents[i], streams[i]));
+    }
+    for (auto event : warmupDone)
+    {
+        /* Safe while still pending: resources are released once the event completes */
+        HIP_RETURN_VOID_ON_FAILURE(hipEventDestroy(event));
     }
 
     for (size_t i = 0; i < nBuffers; i++)
@@ -286,14 +310,32 @@ auto TransferEngine::concurrentBidirectional(
         _executor->blockStreams(streamPairs.at(i));
     }
 
+    /* Enqueue both directions in one call so all transfers share a common start barrier */
+    std::vector<const Buffer*> flatSources;
+    std::vector<const Buffer*> flatDestinations;
+    std::vector<hipStream_t>   flatStreams;
+    std::vector<hipEvent_t>    flatStartEvents;
+    std::vector<hipEvent_t>    flatEndEvents;
+    std::vector<uint64_t>      flatBytesCopied(static_cast<size_t>(pairSize) * nBuffers);
     for (int i = 0; i < pairSize; i++)
     {
-        _enqueueTransfers(sourceBufferPairs.at(i),
-                          destinationBufferPairs.at(i),
-                          streamPairs.at(i),
-                          startEventPairs.at(i),
-                          endEventPairs.at(i),
-                          bytesCopied);
+        auto append
+            = [](auto& to, const auto& from) { to.insert(to.end(), from.begin(), from.end()); };
+        append(flatSources, sourceBufferPairs.at(i));
+        append(flatDestinations, destinationBufferPairs.at(i));
+        append(flatStreams, streamPairs.at(i));
+        append(flatStartEvents, startEventPairs.at(i));
+        append(flatEndEvents, endEventPairs.at(i));
+    }
+    _enqueueTransfers(flatSources,
+                      flatDestinations,
+                      flatStreams,
+                      flatStartEvents,
+                      flatEndEvents,
+                      flatBytesCopied);
+    for (int j = 0; j < nBuffers; j++)
+    {
+        bytesCopied[j] = flatBytesCopied[j];
     }
 
     /* Unblock spin kernels, start measurements */
