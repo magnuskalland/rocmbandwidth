@@ -186,8 +186,12 @@ auto main(int argc, char** argv) -> int
     for (auto& tc : testcases)
     {
         printf("\nRunning %s\n", tc->getKey());
+        /* Flush so the test name comes before any errors the test prints on stderr, even when
+         * stdout is a pipe or file (fully buffered) */
+        fflush(stdout);
         tc->execute();
         printf("%s", tc->getResult().c_str());
+        fflush(stdout);
     }
 
     return EXIT_SUCCESS;
