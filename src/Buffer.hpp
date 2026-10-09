@@ -1,8 +1,4 @@
-
 #pragma once
-
-#ifndef BUFFER_H
-#define BUFFER_H
 
 #include <cstdint>
 
@@ -14,6 +10,12 @@ class Buffer
 {
 public:
     explicit Buffer(int device, uint64_t size) : _device(device), _size(size) {}
+    virtual ~Buffer() = default;
+
+    Buffer(const Buffer&)                    = delete;
+    auto operator=(const Buffer&) -> Buffer& = delete;
+    Buffer(Buffer&&)                         = delete;
+    auto operator=(Buffer&&) -> Buffer&      = delete;
 
     [[nodiscard]] auto getDevice() const -> int
     {
@@ -32,7 +34,7 @@ public:
 
 protected:
     int      _device;
-    void*    _buffer;
+    void*    _buffer = nullptr;
     uint64_t _size;
 };
 
@@ -41,8 +43,17 @@ class HostBuffer : public Buffer
 public:
     HostBuffer(int targetDevice, uint64_t size) : Buffer(-1, size)
     {
+        DeviceGuard guard;
         HIP_EXIT_ON_FAILURE(hipSetDevice(targetDevice));
         HIP_EXIT_ON_FAILURE(hipHostMalloc(&_buffer, _size, hipHostMallocMapped));
+    }
+
+    ~HostBuffer() override
+    {
+        if (_buffer != nullptr)
+        {
+            HIP_CHECK(hipHostFree(_buffer));
+        }
     }
 };
 
@@ -55,6 +66,14 @@ public:
         HIP_EXIT_ON_FAILURE(hipSetDevice(device));
         HIP_EXIT_ON_FAILURE(hipMalloc(&_buffer, size));
     }
-};
 
-#endif
+    ~DeviceBuffer() override
+    {
+        if (_buffer != nullptr)
+        {
+            DeviceGuard guard;
+            HIP_CHECK(hipSetDevice(_device));
+            HIP_CHECK(hipFree(_buffer));
+        }
+    }
+};

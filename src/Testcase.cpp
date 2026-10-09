@@ -490,6 +490,12 @@ void BandwidthAllToHostUnidir::startEngine(CopyAgentPolicy policy)
     }
 
     runEngine(deviceBuffers, hostBuffers, policy);
+
+    for (int dev = 0; dev < devcount; dev++)
+    {
+        delete deviceBuffers[dev];
+        delete hostBuffers[dev];
+    }
 }
 
 void SDMABandwidthAllToHostUnidir::execute()
