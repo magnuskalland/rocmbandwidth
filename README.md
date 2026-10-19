@@ -8,6 +8,8 @@ patterns, using both the ROCm runtime's own copy path (`hipMemcpyAsync`,
 generally backed by the GPU's DMA/SDMA copy engines) and a hand-written HIP
 kernel that drives the copy from the GPU's compute units directly.
 
+`rocmbandwidth` is inspired by [nvbandwidth](https://github.com/NVIDIA/nvbandwidth).
+
 > **Note on scope:** this README documents the tool as it exists in this
 > source tree, including a few rough edges (one unimplemented test category)
 > that are called out explicitly below so you don't go looking for tests that
